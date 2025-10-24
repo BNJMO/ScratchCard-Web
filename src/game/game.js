@@ -4,64 +4,52 @@ import {
   Graphics,
   Text,
   Texture,
-  Rectangle,
-  AnimatedSprite,
   Assets,
   Sprite,
-  BlurFilter,
 } from "pixi.js";
 
-// Sound will be loaded inside createGame function
 import Ease from "../ease.js";
-import diamondTextureUrl from "../../assets/sprites/Diamond.png";
-import bombTextureUrl from "../../assets/sprites/Bomb.png";
-import explosionSheetUrl from "../../assets/sprites/Explosion_Spritesheet.png";
 import tileTapDownSoundUrl from "../../assets/sounds/TileTapDown.wav";
 import tileFlipSoundUrl from "../../assets/sounds/TileFlip.wav";
 import tileHoverSoundUrl from "../../assets/sounds/TileHover.wav";
-import diamondRevealedSoundUrl from "../../assets/sounds/DiamondRevealed.wav";
-import bombRevealedSoundUrl from "../../assets/sounds/BombRevealed.wav";
 import winSoundUrl from "../../assets/sounds/Win.wav";
+import lostSoundUrl from "../../assets/sounds/lost.wav";
 import gameStartSoundUrl from "../../assets/sounds/GameStart.wav";
 
-const PALETTE = {
-  appBg: 0x091b26, // page/canvas background
-  tileBase: 0x2b4756, // main tile face
-  tileInset: 0x2b4756, // inner inset
-  tileStroke: 0x080e11, // subtle outline
-  tileStrokeFlipped: 0x0f0f0f, // subtle outline
-  tileElevationBase: 0x1b2931, // visible lip beneath tile face
-  tileElevationShadow: 0x091b26, // soft drop shadow
-  hover: 0x528aa5, // hover
-  pressedTint: 0x7a7a7a,
-  defaultTint: 0xffffff,
-  safeA: 0x0f181e, // outer
-  safeAUnrevealed: 0x0f181e,
-  safeB: 0x0f181e, // inner
-  safeBUnrevealed: 0x0f181e,
-  bombA: 0x0f181e,
-  bombAUnrevealed: 0x0f181e,
-  bombB: 0x0f181e,
-  bombBUnrevealed: 0x0f181e,
-  winPopupBorder: 0xeaff00,
-  winPopupBackground: 0x091b26,
-  winPopupMultiplierText: 0xeaff00,
-  winPopupSeparationLine: 0x1b2931,
-};
+const GRID_SIZE = 3;
+const CARD_COUNT = GRID_SIZE * GRID_SIZE;
+const BOARD_PADDING = 16;
+const TILE_GAP = 12;
+const TILE_RADIUS = 16;
+const TILE_BASE_COLOR = 0x223845;
+const TILE_FACE_COLOR = 0x091b26;
+const TILE_BORDER_COLOR = 0x0d1b24;
+const TILE_REVEALED_COLOR = 0x162b38;
 
-const AUTO_SELECTION_COLOR = 0x5800a5;
+function resolveMount(mount) {
+  if (!mount) {
+    throw new Error("Game mount target is required");
+  }
+  if (typeof mount === "string") {
+    const element = document.querySelector(mount);
+    if (!element) {
+      throw new Error(`Game mount '${mount}' not found`);
+    }
+    return element;
+  }
+  return mount;
+}
 
-function tween(
-  app,
-  { duration = 300, update, complete, ease = (t) => t, skipUpdate = false }
-) {
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function tween(app, { duration = 300, update, complete, ease = (t) => t }) {
   const start = performance.now();
   const step = () => {
-    const t = Math.min(1, (performance.now() - start) / duration);
-    if (!skipUpdate || t >= 1) {
-      const progress = skipUpdate && t >= 1 ? 1 : t;
-      update?.(ease(progress));
-    }
+    const elapsed = performance.now() - start;
+    const t = Math.min(1, elapsed / duration);
+    update?.(ease(t));
     if (t >= 1) {
       app.ticker.remove(step);
       complete?.();
@@ -70,143 +58,30 @@ function tween(
   app.ticker.add(step);
 }
 
-export async function createGame(mount, opts = {}) {
-  // Load sound library
-  let sound;
-  try {
-    const soundModule = await import("@pixi/sound");
-    sound = soundModule.sound;
-  } catch (e) {
-    console.warn("Sounds disabled:", e.message);
-    // Dummy sound object - must call callbacks to prevent hanging!
-    sound = {
-      add: (alias, options) => {
-        if (options && options.loaded) {
-          setTimeout(() => options.loaded(), 0);
-        }
-      },
-      play: () => {},
-      stop: () => {},
-      exists: () => false,
-    };
+function createCardBack(size) {
+  const g = new Graphics();
+  g.rect(-size / 2, -size / 2, size, size);
+  g.fill(TILE_FACE_COLOR);
+  g.stroke({ color: TILE_BORDER_COLOR, width: 3 });
+  return g;
+}
+
+async function loadTexture(url) {
+  if (!url) {
+    return Texture.WHITE;
   }
+  return Assets.load(url);
+}
 
-  // Options
-  const GRID = opts.grid ?? 5;
-  let mines = Math.max(1, Math.min(opts.mines ?? 5, GRID * GRID - 1));
-  const fontFamily =
-    opts.fontFamily ?? "Inter, system-ui, -apple-system, Segoe UI, Arial";
-  const initialSize = Math.max(1, opts.size ?? 400);
-  const onCardSelected = opts.onCardSelected ?? null;
-  const getMode =
-    typeof opts.getMode === "function" ? () => opts.getMode() : () => "manual";
-  const onAutoSelectionChange =
-    typeof opts.onAutoSelectionChange === "function"
-      ? (count) => opts.onAutoSelectionChange(count)
-      : () => {};
-  const backgroundColor = opts.backgroundColor ?? PALETTE.appBg;
+export async function createGame(mount, options = {}) {
+  const root = resolveMount(mount);
+  const initialSize = Math.max(1, options.size ?? 420);
+  const backgroundColor = options.backgroundColor ?? 0x091b26;
+  const disableAnimations = Boolean(options.disableAnimations);
+  const onCardRevealed = options.onCardRevealed ?? (() => {});
+  const onRoundComplete = options.onRoundComplete ?? (() => {});
 
-  // Visuals
-  const diamondTexturePath = opts.dimaondTexturePath ?? diamondTextureUrl;
-  const bombTexturePath = opts.bombTexturePath ?? bombTextureUrl;
-  const iconSizePercentage = opts.iconSizePercentage ?? 0.7;
-  const iconRevealedSizeOpacity = opts.iconRevealedSizeOpacity ?? 0.4;
-  const iconRevealedSizeFactor = opts.iconRevealedSizeFactor ?? 0.85;
-  const cardsSpawnDuration = opts.cardsSpawnDuration ?? 350;
-  const revealAllIntervalDelay = opts.revealAllIntervalDelay ?? 40;
-  const autoResetDelayMs = Number(opts.autoResetDelayMs ?? 1500);
-  const strokeWidth = opts.strokeWidth ?? 1;
-  const gapBetweenTiles = opts.gapBetweenTiles ?? 0.012;
-
-  // Animation Options
-  let disableAnimations = opts.disableAnimations ?? false;
-  /* Card Hover */
-  const hoverEnabled = opts.hoverEnabled ?? true;
-  const hoverEnterDuration = opts.hoverEnterDuration ?? 120;
-  const hoverExitDuration = opts.hoverExitDuration ?? 200;
-  const hoverTiltAxis = opts.hoverTiltAxis ?? "x"; // 'y' | 'x'
-  const hoverSkewAmount = opts.hoverSkewAmount ?? 0.02;
-
-  /* Card Selected Wiggle */
-  const wiggleSelectionEnabled = opts.wiggleSelectionEnabled ?? true;
-  const wiggleSelectionDuration = opts.wiggleSelectionDuration ?? 900;
-  const wiggleSelectionTimes = opts.wiggleSelectionTimes ?? 15;
-  const wiggleSelectionIntensity = opts.wiggleSelectionIntensity ?? 0.03;
-  const wiggleSelectionScale = opts.wiggleSelectionScale ?? 0.005;
-
-  /* Card Reveal Flip */
-  const flipDelayMin = opts.flipDelayMin ?? 150;
-  const flipDelayMax = opts.flipDelayMax ?? 500;
-  const flipDuration = opts.flipDuration ?? 300;
-  const flipEaseFunction = opts.flipEaseFunction ?? "easeInOutSine";
-
-  /* Bomb Explosion shake */
-  const explosionShakeEnabled = opts.explosionShakeEnabled ?? true;
-  const explosionShakeDuration = opts.explosionShakeDuration ?? 1000;
-  const explosionShakeAmplitude = opts.explosionShakeAmplitude ?? 6;
-  const explosionShakerotationAmplitude =
-    opts.explosionShakerotationAmplitude ?? 0.012;
-  const explosionShakeBaseFrequency = opts.explosionShakeBaseFrequency ?? 8;
-  const explosionShakeSecondaryFrequency =
-    opts.explosionShakeSecondaryFrequency ?? 13;
-
-  /* Bomb Explosion spritesheet */
-  const explosionSheetEnabled = opts.explosionSheetEnabled ?? true;
-  const explosionSheetPath = opts.explosionSheetPath ?? explosionSheetUrl;
-  const explosionSheetCols = opts.explosionSheetCols ?? 7;
-  const explosionSheetRows = opts.explosionSheetRows ?? 3;
-  const explosionSheetFps = opts.explosionSheetFps ?? 24;
-  const explosionSheetScaleFit = opts.explosionSheetScaleFit ?? 0.8;
-  const explosionSheetOpacity = opts.explosionSheetOpacity ?? 0.75;
-
-  /* Sound effects */
-  const tileTapDownSoundPath = opts.tileTapDownSoundPath ?? tileTapDownSoundUrl;
-  const tileFlipSoundPath = opts.tileFlipSoundPath ?? tileFlipSoundUrl;
-  const tileHoverSoundPath = opts.tileHoverSoundPath ?? tileHoverSoundUrl;
-  const diamondRevealedSoundPath =
-    opts.diamondRevealedSoundPath ?? diamondRevealedSoundUrl;
-  const bombRevealedSoundPath =
-    opts.bombRevealedSoundPath ?? bombRevealedSoundUrl;
-  const winSoundPath = opts.winSoundPath ?? winSoundUrl;
-  const gameStartSoundPath = opts.gameStartSoundPath ?? gameStartSoundUrl;
-  const diamondRevealPitchMin = Number(opts.diamondRevealPitchMin ?? 1.0);
-  const diamondRevealPitchMax = Number(opts.diamondRevealPitchMax ?? 1.5);
-
-  const soundEffectPaths = {
-    tileTapDown: tileTapDownSoundPath,
-    tileFlip: tileFlipSoundPath,
-    tileHover: tileHoverSoundPath,
-    diamondRevealed: diamondRevealedSoundPath,
-    bombRevealed: bombRevealedSoundPath,
-    win: winSoundPath,
-    gameStart: gameStartSoundPath,
-  };
-
-  const enabledSoundKeys = new Set(
-    Object.entries(soundEffectPaths)
-      .filter(([, value]) => Boolean(value))
-      .map(([key]) => key)
-  );
-
-  const SOUND_ALIASES = {
-    tileHover: "mines.tileHover",
-    tileTapDown: "mines.tileTapDown",
-    tileFlip: "mines.tileFlip",
-    diamondRevealed: "mines.diamondRevealed",
-    bombRevealed: "mines.bombRevealed",
-    win: "mines.win",
-    gameStart: "mines.gameStart",
-  };
-
-  /* Win pop-up */
-  const winPopupShowDuration = opts.winPopupShowDuration ?? 260;
-  const winPopupWidth = opts.winPopupWidth ?? 240;
-  const winPopupHeight = opts.winPopupHeight ?? 170;
-
-  // Resolve mount element
-  const root =
-    typeof mount === "string" ? document.querySelector(mount) : mount;
-  if (!root) throw new Error("createGame: mount element not found");
+  let animationsEnabled = !disableAnimations;
 
   root.style.position = root.style.position || "relative";
   root.style.aspectRatio = root.style.aspectRatio || "1 / 1";
@@ -215,1609 +90,405 @@ export async function createGame(mount, opts = {}) {
     root.style.maxWidth = "100%";
   }
 
-  let explosionFrames = null;
-  let explosionFrameW = 0;
-  let explosionFrameH = 0;
-  const activeExplosionSprites = new Set();
-  try {
-    await loadExplosionFrames();
-  } catch (e) {
-    console.error("loadExplosionFrames failed", e);
-  }
-
-  let diamondTexture = null;
-  try {
-    await loadDiamondTexture();
-  } catch (e) {
-    console.error("loadDiamondTexture failed", e);
-  }
-
-  let bombTexture = null;
-  try {
-    await loadBombTexture();
-  } catch (e) {
-    console.error("loadBombTexture failed", e);
-  }
-
-  try {
-    await loadSoundEffects();
-  } catch (e) {
-    console.warn("loadSoundEffects failed (non-fatal)", e);
-  }
-
-  // PIXI app
   const app = new Application();
-  try {
-    await app.init({
-      background: backgroundColor,
-      width: initialSize,
-      height: initialSize,
-      antialias: true,
-      resolution: Math.min(window.devicePixelRatio || 1, 2),
-    });
+  await app.init({
+    background: backgroundColor,
+    width: initialSize,
+    height: initialSize,
+    antialias: true,
+    resolution: Math.min(window.devicePixelRatio || 1, 2),
+  });
 
-    // Clear the loading message
-    root.innerHTML = "";
+  root.innerHTML = "";
+  root.appendChild(app.canvas);
 
-    // Append canvas
-    root.appendChild(app.canvas);
-  } catch (e) {
-    console.error("PIXI init failed", e);
-    throw e;
-  }
+  const stage = new Container();
+  app.stage.addChild(stage);
 
-  // Game state
   const board = new Container();
-  const ui = new Container();
-  app.stage.addChild(board, ui);
-
-  const winPopup = createWinPopup();
-  ui.addChild(winPopup.container);
-
-  let tiles = [];
-  let bombPositions = new Set();
-  let gameOver = false;
-  let shouldPlayStartSound = true;
-  let revealedSafe = 0;
-  let totalSafe = GRID * GRID - mines;
-  let waitingForChoice = false;
-  let selectedTile = null;
-  const autoSelectedTiles = new Set();
-  const autoSelectionOrder = [];
-
-  // API callbacks
-  const onWin = opts.onWin ?? (() => {});
-  const onGameOver = opts.onGameOver ?? (() => {});
-  const onChange = opts.onChange ?? (() => {});
-
-  // Game setup and state. TODO: remove later
-
-  // Public API for host integration
-  function reset({ preserveAutoSelections = false } = {}) {
-    gameOver = false;
-    hideWinPopup();
-    bombPositions.clear();
-    shouldPlayStartSound = true;
-    const preservedAutoSelections = preserveAutoSelections
-      ? getAutoSelectionCoordinates()
-      : null;
-    const emitAutoSelectionChange = !preserveAutoSelections;
-    buildBoard({ emitAutoSelectionChange });
-    centerBoard();
-    if (preserveAutoSelections && preservedAutoSelections?.length) {
-      applyAutoSelectionsFromCoordinates(preservedAutoSelections);
-    }
-    onChange(getState());
-  }
-
-  function setMines(n) {
-    mines = Math.max(1, Math.min(n | 0, GRID * GRID - 1));
-    reset();
-  }
-
-  function getState() {
-    return {
-      grid: GRID,
-      mines,
-      revealedSafe,
-      totalSafe,
-      gameOver,
-      waitingForChoice,
-      selectedTile: selectedTile
-        ? { row: selectedTile.row, col: selectedTile.col }
-        : null,
-    };
-  }
-
-  function destroy() {
-    try {
-      ro.disconnect();
-    } catch {}
-    cleanupExplosionSprites();
-    app.destroy(true);
-    if (app.canvas?.parentNode === root) root.removeChild(app.canvas);
-  }
-
-  function setSelectedCardIsDiamond() {
-    if (selectedTile?._animating) {
-      stopHover(selectedTile);
-      stopWiggle(selectedTile);
-    }
-
-    if (
-      !waitingForChoice ||
-      !selectedTile ||
-      selectedTile.revealed ||
-      selectedTile._animating
-    )
-      return;
-    waitingForChoice = false;
-    const tile = selectedTile;
-    selectedTile = null;
-    revealTileWithFlip(tile, "diamond");
-  }
-
-  function SetSelectedCardIsBomb() {
-    if (selectedTile?._animating) {
-      stopHover(selectedTile);
-      stopWiggle(selectedTile);
-    }
-
-    if (
-      !waitingForChoice ||
-      !selectedTile ||
-      selectedTile.revealed ||
-      selectedTile._animating
-    )
-      return;
-
-    gameOver = true;
-    waitingForChoice = false;
-    const tile = selectedTile;
-    selectedTile = null;
-    revealTileWithFlip(tile, "bomb");
-  }
-
-  // Game functions
-  function createWinPopup() {
-    const popupWidth = winPopupWidth;
-    const popupHeight = winPopupHeight;
-
-    const container = new Container();
-    container.visible = false;
-    container.scale.set(0);
-    container.eventMode = "none";
-    container.zIndex = 1000;
-
-    const border = new Graphics();
-    border
-      .roundRect(
-        -popupWidth / 2 - 10,
-        -popupHeight / 2 - 10,
-        popupWidth + 20,
-        popupHeight + 20,
-        32
-      )
-      .fill(PALETTE.winPopupBorder);
-
-    const inner = new Graphics();
-    inner
-      .roundRect(-popupWidth / 2, -popupHeight / 2, popupWidth, popupHeight, 28)
-      .fill(PALETTE.winPopupBackground);
-
-    const multiplierVerticalOffset = -popupHeight / 2 + popupHeight * 0.28;
-    const amountRowVerticalOffset = popupHeight / 2 - popupHeight * 0.25;
-
-    const centerLine = new Graphics();
-    const centerLinePadding = 70;
-    const centerLineWidth = popupWidth - centerLinePadding * 2;
-    const centerLineThickness = 5;
-    centerLine
-      .rect(
-        -centerLineWidth / 2,
-        -centerLineThickness / 2,
-        centerLineWidth,
-        centerLineThickness
-      )
-      .fill(PALETTE.winPopupSeparationLine);
-
-    const multiplierText = new Text({
-      text: "1.00×",
-      style: {
-        fill: PALETTE.winPopupMultiplierText,
-        fontFamily,
-        fontSize: 36,
-        fontWeight: "700",
-        align: "center",
-      },
-    });
-    multiplierText.anchor.set(0.5);
-    multiplierText.position.set(0, multiplierVerticalOffset);
-
-    const amountRow = new Container();
-
-    const amountText = new Text({
-      text: "0.0",
-      style: {
-        fill: 0xffffff,
-        fontFamily,
-        fontSize: 24,
-        fontWeight: "600",
-        align: "center",
-      },
-    });
-    amountText.anchor.set(0.5);
-    amountRow.addChild(amountText);
-
-    const coinContainer = new Container();
-    const coinRadius = 16;
-    const coinBg = new Graphics();
-    coinBg.circle(0, 0, coinRadius).fill(0xf6a821);
-    const coinText = new Text({
-      text: "₿",
-      style: {
-        fill: 0xffffff,
-        fontFamily,
-        fontSize: 18,
-        fontWeight: "700",
-        align: "center",
-      },
-    });
-    coinText.anchor.set(0.5);
-    coinContainer.addChild(coinBg, coinText);
-    amountRow.addChild(coinContainer);
-
-    const layoutAmountRow = () => {
-      const spacing = 20;
-      const coinDiameter = coinRadius * 2;
-      const totalWidth = amountText.width + spacing + coinDiameter;
-
-      amountText.position.set(-(spacing / 2 + coinRadius), 0);
-      coinContainer.position.set(totalWidth / 2 - coinRadius, 0);
-
-      amountRow.position.set(0, amountRowVerticalOffset);
-    };
-
-    layoutAmountRow();
-
-    container.addChild(border, inner, centerLine, multiplierText, amountRow);
-
-    return {
-      container,
-      multiplierText,
-      amountText,
-      layoutAmountRow,
-    };
-  }
-
-  function positionWinPopup() {
-    winPopup.container.position.set(
-      app.renderer.width / 2,
-      app.renderer.height / 2
-    );
-  }
-
-  function hideWinPopup() {
-    winPopup.container.visible = false;
-    winPopup.container.scale.set(0);
-  }
-
-  function formatMultiplier(multiplierValue) {
-    if (
-      typeof multiplierValue === "number" &&
-      Number.isFinite(multiplierValue)
-    ) {
-      return `${multiplierValue.toFixed(2)}×`;
-    }
-
-    const raw = `${multiplierValue ?? ""}`;
-    if (!raw) return "";
-    return raw.endsWith("×") ? raw : `${raw}×`;
-  }
-
-  function formatAmount(amountValue) {
-    if (typeof amountValue === "number" && Number.isFinite(amountValue)) {
-      return amountValue.toLocaleString("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 8,
-      });
-    }
-
-    return `${amountValue ?? ""}`;
-  }
-
-  function spawnWinPopup(multiplierValue, amountValue) {
-    winPopup.multiplierText.text = formatMultiplier(multiplierValue);
-    winPopup.amountText.text = formatAmount(amountValue);
-    winPopup.layoutAmountRow();
-    positionWinPopup();
-
-    winPopup.container.visible = true;
-    winPopup.container.alpha = 1;
-    winPopup.container.scale.set(0);
-
-    playSoundEffect("win");
-
-    if (disableAnimations) {
-      winPopup.container.scale.set(1);
-      return;
-    }
-
-    tween(app, {
-      duration: winPopupShowDuration,
-      skipUpdate: disableAnimations,
-      ease: (t) => Ease.easeOutQuad(t),
-      update: (p) => {
-        winPopup.container.scale.set(p);
-      },
-    });
-  }
-
-  async function loadDiamondTexture() {
-    if (diamondTexture) return;
-
-    diamondTexture = await Assets.load(diamondTexturePath);
-  }
-
-  async function loadBombTexture() {
-    if (bombTexture) return;
-
-    bombTexture = await Assets.load(bombTexturePath);
-  }
-
-  async function loadExplosionFrames() {
-    if (explosionFrames) return;
-
-    const baseTex = await Assets.load(explosionSheetPath);
-
-    const sheetW = baseTex.width;
-    const sheetH = baseTex.height;
-
-    explosionFrameW = Math.floor(sheetW / explosionSheetCols);
-    explosionFrameH = Math.floor(sheetH / explosionSheetRows);
-
-    explosionFrames = [];
-    for (let r = 0; r < explosionSheetRows; r++) {
-      for (let c = 0; c < explosionSheetCols; c++) {
-        const rect = new Rectangle(
-          c * explosionFrameW,
-          r * explosionFrameH,
-          explosionFrameW,
-          explosionFrameH
-        );
-
-        explosionFrames.push(
-          new Texture({ source: baseTex.source, frame: rect })
-        );
-      }
-    }
-  }
-
-  function cleanupExplosionSprites() {
-    for (const sprite of activeExplosionSprites) {
-      if (!sprite.destroyed) {
-        sprite.stop();
-        sprite.destroy();
-      }
-    }
-    activeExplosionSprites.clear();
-  }
-
-  function loadSoundEffect(key, path) {
-    if (!enabledSoundKeys.has(key) || !path) {
-      return Promise.resolve();
-    }
-
-    const alias = SOUND_ALIASES[key];
-    if (!alias) {
-      return Promise.resolve();
-    }
-
-    if (sound.exists?.(alias)) {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-      sound.add(alias, {
-        url: path,
-        preload: true,
-        loaded: resolve,
-        error: resolve,
-      });
-    });
-  }
-
-  async function loadSoundEffects() {
-    const loaders = Object.entries(soundEffectPaths).map(([key, path]) =>
-      loadSoundEffect(key, path)
-    );
-
-    await Promise.all(loaders);
-  }
-
-  function playSoundEffect(key, options = {}) {
-    if (!enabledSoundKeys.has(key)) return;
-
-    const alias = SOUND_ALIASES[key];
-    if (!alias) return;
-
-    try {
-      sound.play(alias, options);
-    } catch (err) {
-      // Ignore playback errors so they don't interrupt gameplay
-    }
-  }
-
-  function spawnExplosionSheetOnTile(tile) {
-    if (!explosionSheetEnabled || !explosionFrames || !explosionFrames.length)
-      return;
-
-    const anim = new AnimatedSprite(explosionFrames);
-    anim.loop = true;
-    anim.animationSpeed = explosionSheetFps / 60;
-    anim.anchor.set(0.5);
-    anim.alpha = explosionSheetOpacity;
-
-    const size = tile._tileSize;
-    anim.position.set(size / 2, size / 2);
-
-    const sx = (size * explosionSheetScaleFit) / explosionFrameW;
-    const sy = (size * explosionSheetScaleFit) / explosionFrameH;
-    anim.scale.set(Math.min(sx, sy));
-
-    const wrap = tile._wrap;
-    const iconIndex = wrap.getChildIndex(tile._icon);
-    wrap.addChildAt(anim, iconIndex);
-
-    activeExplosionSprites.add(anim);
-    const originalDestroy = anim.destroy.bind(anim);
-    anim.destroy = (...args) => {
-      activeExplosionSprites.delete(anim);
-      return originalDestroy(...args);
-    };
-
-    anim.play();
-  }
-
-  function bombShakeTile(tile) {
-    if (!explosionShakeEnabled || !tile || tile.destroyed || tile._bombShaking)
-      return;
-
-    tile._bombShaking = true;
-
-    const duration = explosionShakeDuration;
-    const amp = explosionShakeAmplitude;
-    const rotAmp = explosionShakerotationAmplitude;
-    const f1 = explosionShakeBaseFrequency;
-    const f2 = explosionShakeSecondaryFrequency;
-
-    const bx = tile._baseX ?? tile.x;
-    const by = tile._baseY ?? tile.y;
-    const r0 = tile.rotation;
-
-    const phiX1 = Math.random() * Math.PI * 2;
-    const phiX2 = Math.random() * Math.PI * 2;
-    const phiY1 = Math.random() * Math.PI * 2;
-    const phiY2 = Math.random() * Math.PI * 2;
-
-    tween(app, {
-      duration,
-      skipUpdate: disableAnimations,
-      ease: (t) => t,
-      update: (p) => {
-        const decay = Math.exp(-5 * p);
-        const w1 = p * Math.PI * 2 * f1;
-        const w2 = p * Math.PI * 2 * f2;
-
-        const dx =
-          (Math.sin(w1 + phiX1) + 0.5 * Math.sin(w2 + phiX2)) * amp * decay;
-        const dy =
-          (Math.cos(w1 + phiY1) + 0.5 * Math.sin(w2 + phiY2)) * amp * decay;
-
-        if (!tile || tile.destroyed) {
-          tile && (tile._bombShaking = false);
-          return;
+  stage.addChild(board);
+
+  const overlay = new Container();
+  overlay.visible = false;
+  stage.addChild(overlay);
+
+  const overlayBackground = new Graphics();
+  overlayBackground.rect(0, 0, app.view.width, app.view.height);
+  overlayBackground.fill({ color: 0x000000, alpha: 0.65 });
+  overlayBackground.interactive = true;
+  overlayBackground.eventMode = "none";
+  overlay.addChild(overlayBackground);
+
+  const overlayContent = new Container();
+  overlayContent.x = app.view.width / 2;
+  overlayContent.y = app.view.height / 2;
+  overlay.addChild(overlayContent);
+
+  const overlayCard = new Sprite();
+  overlayCard.anchor.set(0.5);
+  overlayCard.scale.set(0.8);
+  overlayContent.addChild(overlayCard);
+
+  const overlayText = new Text({
+    text: "You Win!",
+    style: {
+      fill: 0xeaff00,
+      fontSize: 36,
+      fontWeight: "700",
+      fontFamily: options.fontFamily ?? "Inter, system-ui, sans-serif",
+      align: "center",
+    },
+  });
+  overlayText.anchor.set(0.5);
+  overlayText.y = 120;
+  overlayContent.addChild(overlayText);
+
+  let sound;
+  try {
+    const soundModule = await import("@pixi/sound");
+    sound = soundModule.sound;
+  } catch (error) {
+    console.warn("Sounds disabled:", error?.message ?? error);
+    sound = {
+      add: (alias, opts) => {
+        if (opts?.loaded) {
+          setTimeout(() => opts.loaded(), 0);
         }
+      },
+      play: () => {},
+      stop: () => {},
+      exists: () => false,
+    };
+  }
 
-        tile.x = bx + dx;
-        tile.y = by + dy;
+  const SOUND_ALIASES = {
+    tap: "scratch.tap",
+    flip: "scratch.flip",
+    hover: "scratch.hover",
+    win: "scratch.win",
+    lost: "scratch.lost",
+    start: "scratch.start",
+  };
 
-        tile.rotation = r0 + Math.sin(w2 + phiX1) * rotAmp * decay;
+  const textures = [];
+  const textureUrls = Array.isArray(options.cardTypeTextureUrls)
+    ? options.cardTypeTextureUrls
+    : [];
+  for (const url of textureUrls) {
+    textures.push(await loadTexture(url));
+  }
+
+  sound.add(SOUND_ALIASES.tap, { url: tileTapDownSoundUrl });
+  sound.add(SOUND_ALIASES.flip, { url: tileFlipSoundUrl });
+  sound.add(SOUND_ALIASES.hover, { url: tileHoverSoundUrl });
+  sound.add(SOUND_ALIASES.win, { url: winSoundUrl });
+  sound.add(SOUND_ALIASES.lost, { url: lostSoundUrl });
+  sound.add(SOUND_ALIASES.start, { url: gameStartSoundUrl });
+
+  const cards = [];
+  let cardAssignments = new Array(CARD_COUNT).fill(null);
+  let revealedSet = new Set();
+  let interactionEnabled = false;
+  let currentRoundResult = null;
+  let currentWinningTypeId = null;
+
+  function playSound(alias) {
+    if (!sound?.exists?.(alias)) {
+      return;
+    }
+    try {
+      sound.play(alias);
+    } catch (error) {
+      console.warn("Failed to play sound", alias, error);
+    }
+  }
+
+  function resetOverlay() {
+    overlay.visible = false;
+    overlay.alpha = 0;
+    overlayContent.scale.set(0.8);
+  }
+
+  function showOverlay(cardTexture) {
+    overlay.visible = true;
+    overlay.alpha = 0;
+    overlayCard.texture = cardTexture ?? Texture.WHITE;
+    overlayContent.scale.set(0.8);
+    playSound(SOUND_ALIASES.win);
+    tween(app, {
+      duration: 260,
+      ease: Ease.easeOutBack,
+      update: (t) => {
+        overlay.alpha = t;
+        const scale = lerp(0.8, 1, t);
+        overlayContent.scale.set(scale);
+      },
+    });
+  }
+
+  function hideOverlay() {
+    if (!overlay.visible) {
+      return;
+    }
+    tween(app, {
+      duration: 180,
+      ease: Ease.easeInQuad,
+      update: (t) => {
+        overlay.alpha = 1 - t;
       },
       complete: () => {
-        if (!tile || tile.destroyed) {
-          tile && (tile._bombShaking = false);
-          return;
-        }
-
-        tile.x = bx;
-        tile.y = by;
-        tile.rotation = r0;
-        tile._bombShaking = false;
+        overlay.visible = false;
       },
     });
   }
 
-  function getSkew(wrap) {
-    return hoverTiltAxis === "y" ? wrap.skew.y : wrap.skew.x;
-  }
-
-  function setSkew(wrap, v) {
-    if (hoverTiltAxis === "y") wrap.skew.y = v;
-    else wrap.skew.x = v;
-  }
-
-  function hoverTile(tile, on) {
-    if (!hoverEnabled || !tile || tile._animating) return;
-
-    const wrap = tile._wrap;
-    if (!wrap) return;
-
-    const startScale = wrap.scale.x;
-    const endScale = on ? 1.03 : 1.0;
-
-    const startSkew = getSkew(wrap);
-    const endSkew = on ? hoverSkewAmount : 0;
-
-    const startY = tile.y;
-    const endY = on ? tile._baseY - 3 : tile._baseY;
-
-    const token = Symbol("hover");
-    tile._hoverToken = token;
-
-    // Change color
-    const card = tile._card;
-    const inset = tile._inset;
-    if (card && inset) {
-      const size = tile._tileSize;
-      const r = tile._tileRadius;
-      const pad = tile._tilePad;
-      if (on) {
-        flipFace(card, size, size, r, PALETTE.hover);
-        flipInset(inset, size, size, r, pad, PALETTE.hover);
-      } else {
-        refreshTileTint(tile);
-      }
-    }
-
-    if (disableAnimations) {
-      tile._wrap.scale.set(endScale);
-      setSkew(tile._wrap, endSkew);
-      tile.y = endY;
-      return;
-    }
-
-    tween(app, {
-      duration: on ? hoverEnterDuration : hoverExitDuration,
-      skipUpdate: disableAnimations,
-      ease: (x) => (on ? 1 - Math.pow(1 - x, 3) : x * x * x),
-      update: (p) => {
-        if (!tile || tile.destroyed) return;
-        const wrap = tile._wrap;
-        if (!wrap) return;
-        if (tile._hoverToken !== token) return;
-        const scale = wrap.scale;
-        if (!scale) return;
-        const s = startScale + (endScale - startScale) * p;
-        scale.x = scale.y = s;
-
-        const k = startSkew + (endSkew - startSkew) * p;
-        setSkew(wrap, k);
-
-        tile.y = startY + (endY - startY) * p;
-      },
-      complete: () => {
-        if (!tile || tile.destroyed) return;
-        const wrap = tile._wrap;
-        if (!wrap) return;
-        if (tile._hoverToken !== token) return;
-        const scale = wrap.scale;
-        if (!scale) return;
-        if (typeof scale.set === "function") {
-          scale.set(endScale);
-        } else {
-          scale.x = scale.y = endScale;
-        }
-        setSkew(wrap, endSkew);
-        tile.y = endY;
-      },
-    });
-  }
-
-  function wiggleTile(t) {
-    if (!wiggleSelectionEnabled || t._animating) return;
-
-    const wrap = t._wrap;
-    const baseSkew = getSkew(wrap);
-    const baseScale = wrap.scale.x;
-
-    t._animating = true;
-
-    const token = Symbol("wiggle");
-    t._wiggleToken = token;
-
-    tween(app, {
-      duration: wiggleSelectionDuration,
-      skipUpdate: disableAnimations,
-      ease: (p) => p,
-      update: (p) => {
-        if (t._wiggleToken !== token) return;
-        const wiggle =
-          Math.sin(p * Math.PI * wiggleSelectionTimes) *
-          wiggleSelectionIntensity;
-        setSkew(wrap, baseSkew + wiggle);
-
-        const scaleWiggle =
-          1 +
-          Math.sin(p * Math.PI * wiggleSelectionTimes) * wiggleSelectionScale;
-        wrap.scale.x = wrap.scale.y = baseScale * scaleWiggle;
-      },
-      complete: () => {
-        if (t._wiggleToken !== token) return;
-        setSkew(wrap, baseSkew);
-        wrap.scale.x = wrap.scale.y = baseScale;
-        t._animating = false;
-      },
-    });
-  }
-
-  function stopHover(t) {
-    t._hoverToken = Symbol("hover-cancelled");
-  }
-
-  function stopWiggle(t) {
-    t._wiggleToken = Symbol("wiggle-cancelled");
-    t._animating = false;
-  }
-
-  function setAnimationsEnabled(enabled) {
-    const nextDisabled = !Boolean(enabled);
-    if (disableAnimations === nextDisabled) {
-      return;
-    }
-
-    disableAnimations = nextDisabled;
-
-    if (disableAnimations) {
-      for (const tile of tiles) {
-        if (!tile) continue;
-        stopHover(tile);
-        stopWiggle(tile);
-        forceFlatPose(tile);
-        refreshTileTint(tile);
-      }
-
-      if (winPopup?.container) {
-        const { container } = winPopup;
-        container.alpha = 1;
-        if (container.scale?.set) {
-          container.scale.set(1);
-        } else if (container.scale != null) {
-          container.scale = 1;
-        }
-      }
-    }
-  }
-
-  function isAutoModeActive() {
-    try {
-      return String(getMode?.() ?? "manual").toLowerCase() === "auto";
-    } catch (e) {
-      return false;
-    }
-  }
-
-  function paintTileBase(graphic, size, radius, color) {
-    if (!graphic || typeof graphic.clear !== "function") {
-      return;
-    }
-
-    graphic
-      .clear()
-      .roundRect(0, 0, size, size, radius)
-      .fill(color)
-      .stroke({ color: PALETTE.tileStroke, width: strokeWidth, alpha: 0.9 });
-  }
-
-  function paintTileInset(graphic, size, radius, pad, color) {
-    if (!graphic || typeof graphic.clear !== "function") {
-      return;
-    }
-
-    graphic
-      .clear()
-      .roundRect(
-        pad,
-        pad,
-        size - pad * 2,
-        size - pad * 2,
-        Math.max(8, radius - 6)
-      )
-      .fill(color);
-  }
-
-  function applyTileTint(tile, tint) {
-    if (!tile) return;
-    if (tile._inset) {
-      tile._inset.tint = tint;
-    }
-    if (tile._card) {
-      tile._card.tint = tint;
-    }
-  }
-
-  function refreshTileTint(tile) {
-    if (!tile) return;
-
-    const card = tile._card;
-    const inset = tile._inset;
-
-    if (!card && !inset) {
-      return;
-    }
-
-    if (tile.revealed) {
-      if (card) {
-        card.tint = PALETTE.defaultTint;
-      }
-      if (inset) {
-        inset.tint = PALETTE.defaultTint;
-      }
-      return;
-    }
-
-    const size = tile._tileSize;
-    const radius = tile._tileRadius;
-    const pad = tile._tilePad;
-
-    const baseColor = tile.isAutoSelected
-      ? AUTO_SELECTION_COLOR
-      : PALETTE.tileBase;
-    const insetColor = tile.isAutoSelected
-      ? AUTO_SELECTION_COLOR
-      : PALETTE.tileInset;
-
-    paintTileBase(card, size, radius, baseColor);
-    paintTileInset(inset, size, radius, pad, insetColor);
-
-    if (card) {
-      card.tint = PALETTE.defaultTint;
-    }
-    if (inset) {
-      inset.tint = PALETTE.defaultTint;
-    }
-  }
-
-  function notifyAutoSelectionChange() {
-    onAutoSelectionChange(autoSelectedTiles.size);
-  }
-
-  function setAutoTileSelected(
-    tile,
-    selected,
-    { emit = true, refresh = true, releaseHover = true } = {}
-  ) {
-    if (!tile) return;
-
-    if (selected) {
-      if (tile.isAutoSelected) {
-        if (emit) notifyAutoSelectionChange();
-        return;
-      }
-      stopHover(tile);
-      tile.isAutoSelected = true;
-      tile.taped = true;
-      autoSelectedTiles.add(tile);
-      autoSelectionOrder.push(tile);
-    } else {
-      if (!tile.isAutoSelected) {
-        if (emit) notifyAutoSelectionChange();
-        return;
-      }
-      tile.isAutoSelected = false;
-      tile.taped = false;
-      autoSelectedTiles.delete(tile);
-      const index = autoSelectionOrder.indexOf(tile);
-      if (index >= 0) {
-        autoSelectionOrder.splice(index, 1);
-      }
-    }
-
-    tile._pressed = false;
-    if (refresh) {
-      refreshTileTint(tile);
-    }
-    if (releaseHover) {
-      hoverTile(tile, false);
-    }
-
-    if (emit) {
-      notifyAutoSelectionChange();
-    }
-  }
-
-  function toggleAutoTileSelection(tile) {
-    if (!tile || tile.revealed) {
-      return;
-    }
-
-    const willSelect = !tile.isAutoSelected;
-    setAutoTileSelected(tile, willSelect);
-    waitingForChoice = false;
-    selectedTile = null;
-    onChange(getState());
-  }
-
-  function clearAutoSelections({ emit = true } = {}) {
-    if (autoSelectedTiles.size === 0) {
-      if (emit) notifyAutoSelectionChange();
-      return;
-    }
-
-    for (const tile of Array.from(autoSelectedTiles)) {
-      tile.isAutoSelected = false;
-      tile.taped = false;
-      refreshTileTint(tile);
-    }
-
-    autoSelectedTiles.clear();
-    autoSelectionOrder.length = 0;
-
-    if (emit) {
-      notifyAutoSelectionChange();
-    }
-  }
-
-  function createTile(row, col, size) {
-    const raduis = Math.min(18, size * 0.18);
-    const pad = Math.max(7, Math.floor(size * 0.08));
-    const elevationOffset = Math.max(4, Math.floor(size * 0.07));
-    const lipOffset = Math.max(2, Math.floor(size * 0.04));
-    const shadowBlur = Math.max(4, Math.floor(size * 0.09));
-
-    const elevationShadow = new Graphics()
-      .roundRect(0, 0, size, size, raduis)
-      .fill(PALETTE.tileElevationShadow);
-    elevationShadow.y = elevationOffset;
-    elevationShadow.alpha = 0.32;
-    const shadowFilter = new BlurFilter(shadowBlur);
-    shadowFilter.quality = 2;
-    elevationShadow.filters = [shadowFilter];
-
-    const elevationLip = new Graphics()
-      .roundRect(0, 0, size, size, raduis)
-      .fill(PALETTE.tileElevationBase);
-    elevationLip.y = lipOffset;
-    elevationLip.alpha = 0.85;
-
-    const card = new Graphics();
-    paintTileBase(card, size, raduis, PALETTE.tileBase);
-
-    const inset = new Graphics();
-    paintTileInset(inset, size, raduis, pad, PALETTE.tileInset);
-
-    const icon = new Sprite();
-    icon.anchor.set(0.5);
-    icon.x = size / 2;
-    icon.y = size / 2;
-    icon.visible = false;
-
-    // Centered wrapper – flip happens here
-    const flipWrap = new Container();
-    flipWrap.addChild(elevationShadow, elevationLip, card, inset, icon);
-    flipWrap.position.set(size / 2, size / 2);
-    flipWrap.pivot.set(size / 2, size / 2);
-
-    const t = new Container();
-    t.addChild(flipWrap);
-
-    t.eventMode = "static";
-    t.cursor = "pointer";
-    t.row = row;
-    t.col = col;
-    t.revealed = false;
-    t._animating = false;
-    t._layoutScale = 1;
-
-    t._wrap = flipWrap;
-    t._card = card;
-    t._inset = inset;
-    t._icon = icon;
-    t._tileSize = size;
-    t._tileRadius = raduis;
-    t._tilePad = pad;
-
-    // Spwan animation
-    const s0 = 0.0001;
-    flipWrap.scale?.set?.(s0);
-    if (disableAnimations) {
-      flipWrap.scale?.set?.(1, 1);
-    } else {
-      tween(app, {
-        duration: cardsSpawnDuration,
-        skipUpdate: disableAnimations,
-        ease: (x) => Ease.easeOutBack(x),
-        update: (p) => {
-          const s = s0 + (1 - s0) * p;
-          flipWrap.scale?.set?.(s);
-        },
-        complete: () => {
-          flipWrap.scale?.set?.(1, 1);
-        },
-      });
-    }
-
-    t.on("pointerover", () => {
-      const autoMode = isAutoModeActive();
-      const untapedCount = tiles.filter((tile) => !tile.taped).length;
-      if (!autoMode && untapedCount <= mines) return;
-
-      const waitingBlocked = !autoMode && waitingForChoice;
-
-      if (
-        !gameOver &&
-        !waitingBlocked &&
-        !t.revealed &&
-        !t._animating &&
-        selectedTile !== t
-      ) {
-        if (hoverEnabled && (!autoMode || !t.isAutoSelected)) {
-          playSoundEffect("tileHover");
-        }
-        if (!autoMode || !t.isAutoSelected) {
-          hoverTile(t, true);
-        }
-
-        if (t._pressed) {
-          applyTileTint(t, PALETTE.pressedTint);
-        }
-      }
-    });
-    t.on("pointerdown", () => {
-      const autoMode = isAutoModeActive();
-      const untapedCount = tiles.filter((tile) => !tile.taped).length;
-      const limitReached = untapedCount <= mines;
-      const isSelectingNewAutoTile = autoMode && !t.isAutoSelected;
-
-      if (
-        gameOver ||
-        t.revealed ||
-        t._animating ||
-        (!autoMode && (waitingForChoice || limitReached)) ||
-        (autoMode && isSelectingNewAutoTile && limitReached)
-      ) {
-        return;
-      }
-
-      playSoundEffect("tileTapDown");
-      applyTileTint(t, PALETTE.pressedTint);
-      t._pressed = true;
-    });
-    t.on("pointerup", () => {
-      if (t._pressed) {
-        t._pressed = false;
-        refreshTileTint(t);
-      }
-    });
-    t.on("pointerout", () => {
-      if (!t.revealed && !t._animating && selectedTile !== t) {
-        if (!isAutoModeActive() || !t.isAutoSelected) {
-          hoverTile(t, false);
-        }
-        if (t._pressed) {
-          t._pressed = false;
-          refreshTileTint(t);
-        }
-      }
-    });
-    t.on("pointerupoutside", () => {
-      if (t._pressed) {
-        t._pressed = false;
-        refreshTileTint(t);
-      }
-    });
-    t.on("pointertap", () => {
-      const autoMode = isAutoModeActive();
-      const untapedCount = tiles.filter((tile) => !tile.taped).length;
-
-      if (autoMode) {
-        if (gameOver || t.revealed || t._animating) {
-          return;
-        }
-        if (!t.isAutoSelected && untapedCount <= mines) {
-          return;
-        }
-
-        toggleAutoTileSelection(t);
-        return;
-      }
-
-      if (
-        gameOver ||
-        waitingForChoice ||
-        t.revealed ||
-        t._animating ||
-        untapedCount <= mines
-      )
-        return;
-
-      t.taped = true;
-      hoverTile(t, false);
-      enterWaitingState(t);
-    });
-
-    return t;
-  }
-
-  function selectRandomTile() {
-    if (gameOver || waitingForChoice) {
-      return null;
-    }
-
-    const untapedTiles = tiles.filter((t) => !t.taped);
-    if (untapedTiles.length <= mines) {
-      return null;
-    }
-
-    const candidates = untapedTiles.filter((t) => !t.revealed && !t._animating);
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    const tile = candidates[Math.floor(Math.random() * candidates.length)];
-    tile.taped = true;
-    hoverTile(tile, false);
-    enterWaitingState(tile);
-
-    return { row: tile.row, col: tile.col };
-  }
-
-  function getAutoSelectionCoordinates() {
-    return autoSelectionOrder.map((tile) => ({ row: tile.row, col: tile.col }));
-  }
-
-  function revealAutoSelections(results = []) {
-    if (!Array.isArray(results) || results.length === 0) {
-      return;
-    }
-
-    const tileMap = new Map(
-      tiles.map((tile) => [`${tile.row},${tile.col}`, tile])
-    );
-
-    waitingForChoice = false;
-    selectedTile = null;
-
-    let bombHit = false;
-    let pendingReveals = 0;
-    let winFinalized = false;
-
-    const finalizeAutoWin = () => {
-      if (winFinalized || bombHit || pendingReveals > 0) {
-        return;
-      }
-      if (revealedSafe < totalSafe) {
-        winFinalized = true;
-        revealAllTiles(undefined, { stagger: false });
-        onWin();
-      }
-    };
-
-    for (const entry of results) {
-      const key = `${entry.row},${entry.col}`;
-      const tile = tileMap.get(key);
-      if (!tile || tile.revealed) {
-        continue;
-      }
-
-      const useSelectionBase = Boolean(tile.isAutoSelected);
-      if (tile.isAutoSelected) {
-        setAutoTileSelected(tile, false, {
-          emit: false,
-          refresh: false,
-          releaseHover: false,
+  function buildBoard() {
+    board.removeChildren();
+    cards.length = 0;
+
+    const available = Math.min(app.view.width, app.view.height);
+    const tileSize =
+      (available - BOARD_PADDING * 2 - TILE_GAP * (GRID_SIZE - 1)) / GRID_SIZE;
+
+    for (let row = 0; row < GRID_SIZE; row += 1) {
+      for (let col = 0; col < GRID_SIZE; col += 1) {
+        const idx = row * GRID_SIZE + col;
+        const container = new Container();
+        container.x =
+          BOARD_PADDING + col * (tileSize + TILE_GAP) + tileSize / 2;
+        container.y =
+          BOARD_PADDING + row * (tileSize + TILE_GAP) + tileSize / 2;
+        container.eventMode = "static";
+        container.cursor = "pointer";
+
+        const base = new Graphics();
+        base.roundRect(-tileSize / 2, -tileSize / 2, tileSize, tileSize, TILE_RADIUS);
+        base.fill(TILE_BASE_COLOR);
+        container.addChild(base);
+
+        const face = createCardBack(tileSize * 0.9);
+        container.addChild(face);
+
+        const icon = new Sprite(Texture.WHITE);
+        icon.anchor.set(0.5);
+        icon.visible = false;
+        icon.width = tileSize * 0.66;
+        icon.height = tileSize * 0.66;
+        container.addChild(icon);
+
+        container.on("pointertap", () => revealCard(idx));
+        container.on("pointerover", () => {
+          if (!interactionEnabled || revealedSet.has(idx)) {
+            return;
+          }
+          playSound(SOUND_ALIASES.hover);
+        });
+        container.on("pointerdown", () => {
+          if (!interactionEnabled || revealedSet.has(idx)) {
+            return;
+          }
+          playSound(SOUND_ALIASES.tap);
+        });
+
+        board.addChild(container);
+        cards.push({
+          container,
+          base,
+          face,
+          icon,
+          index: idx,
+          revealed: false,
+          typeId: null,
         });
       }
-
-      const normalizedResult = String(entry?.result ?? "").toLowerCase();
-      const isBomb = normalizedResult === "lost";
-      if (isBomb) {
-        bombHit = true;
-      }
-
-      const started = revealTileWithFlip(
-        tile,
-        isBomb ? "bomb" : "diamond",
-        true,
-        {
-          useSelectionBase,
-          staggerRevealAll: false,
-          onComplete: () => {
-            pendingReveals = Math.max(0, pendingReveals - 1);
-            finalizeAutoWin();
-          },
-        }
-      );
-
-      if (started) {
-        pendingReveals += 1;
-      }
-    }
-
-    clearAutoSelections({ emit: false });
-    notifyAutoSelectionChange();
-
-    gameOver = true;
-    waitingForChoice = false;
-    onChange(getState());
-
-    finalizeAutoWin();
-  }
-
-  function flipFace(graphic, w, h, r, color, stroke = true) {
-    graphic.clear().roundRect(0, 0, w, h, r).fill(color);
-    if (stroke) {
-      graphic.stroke({
-        color: PALETTE.tileStrokeFlipped,
-        width: strokeWidth,
-        alpha: 0.5,
-      });
     }
   }
 
-  function flipInset(graphic, w, h, r, pad, color) {
-    graphic
-      .clear()
-      .roundRect(pad, pad, w - pad * 2, h - pad * 2, Math.max(8, r - 6))
-      .fill(color);
+  function setCardType(idx, typeId) {
+    const card = cards[idx];
+    if (!card) return;
+    card.typeId = typeId;
+    card.icon.texture = textures[typeId] ?? Texture.WHITE;
   }
 
-  function easeFlip(t) {
-    switch (flipEaseFunction) {
-      case "easeInOutBack":
-        return Ease.easeInOutBack(t);
+  function setCardAppearance(card, revealed) {
+    card.revealed = revealed;
+    card.icon.visible = revealed;
+    card.face.visible = !revealed;
+    card.base.tint = revealed ? TILE_REVEALED_COLOR : 0xffffff;
+  }
 
-      case "easeInOutSine":
-        return Ease.easeInOutSine(t);
+  function revealCard(idx, { silent = false } = {}) {
+    if (!interactionEnabled) {
+      return;
     }
-  }
+    if (revealedSet.has(idx)) {
+      return;
+    }
+    const card = cards[idx];
+    if (!card) {
+      return;
+    }
+    revealedSet.add(idx);
+    cardAssignments[idx] = cardAssignments[idx] ?? card.typeId ?? 0;
 
-  function forceFlatPose(t) {
-    t._hoverToken = Symbol("hover-kill");
-    t._wiggleToken = Symbol("wiggle-kill");
+    const targetTexture = textures[cardAssignments[idx]] ?? Texture.WHITE;
 
-    const w = t._wrap;
-    if (!w || !w.scale) {
+    const flip = () => {
+      card.icon.texture = targetTexture;
+      setCardAppearance(card, true);
+    };
+
+    if (!silent) {
+      playSound(SOUND_ALIASES.flip);
+    }
+
+    if (!animationsEnabled) {
+      flip();
+      handleCardRevealed(idx);
       return;
     }
 
-    const clampOnce = () => {
-      if (!w.scale) return;
-
-      w.scale.set(1, 1);
-      w.skew.set(0, 0);
-      w.rotation = 0;
-
-      const layoutScale = t._layoutScale ?? 1;
-      t.scale?.set(layoutScale, layoutScale);
-      t.skew?.set(0, 0);
-      t.rotation = 0;
-
-      t.y = t._baseY ?? t.y;
-    };
-
-    clampOnce();
-
-    app.ticker.addOnce(clampOnce);
-    app.ticker.addOnce(clampOnce);
-  }
-
-  function revealTileWithFlip(
-    tile,
-    face /* "diamond" | "bomb" */,
-    revealedByPlayer = true,
-    options = {}
-  ) {
-    const {
-      useSelectionBase = false,
-      staggerRevealAll = true,
-      onComplete = null,
-    } = options;
-    if (tile._animating || tile.revealed) return false;
-
-    const unrevealed = tiles.filter((t) => !t.revealed).length;
-    const revealedCount = tiles.length - unrevealed;
-    const progress = Math.min(1, revealedCount / tiles.length);
-    const flipDelay = revealedByPlayer
-      ? flipDelayMin + (flipDelayMax - flipDelayMin) * progress
-      : flipDelayMin;
-    setTimeout(() => {
-      stopHover(tile);
-      stopWiggle(tile);
-      const wrap = tile._wrap;
-      const card = tile._card;
-      const inset = tile._inset;
-      const icon = tile._icon;
-      const radius = tile._tileRadius;
-      const pad = tile._tilePad;
-      const tileSize = tile._tileSize;
-
-      if (
-        tile.destroyed ||
-        !wrap ||
-        !wrap.scale ||
-        !wrap.skew ||
-        wrap.destroyed ||
-        !card ||
-        card.destroyed ||
-        !inset ||
-        inset.destroyed ||
-        !icon ||
-        icon.destroyed
-      ) {
-        tile._animating = false;
-        onComplete?.(tile, { face, revealedByPlayer, cancelled: true });
-        return;
-      }
-
-      tile._animating = true;
-
-      if (revealedByPlayer) {
-        playSoundEffect("tileFlip");
-      }
-
-      const startScaleY = wrap.scale.y;
-      const startSkew = getSkew(wrap);
-
-      let swapped = false;
-
-      if (!revealedByPlayer) {
-        icon.alpha = iconRevealedSizeOpacity;
-      }
-
-      tween(app, {
-        duration: flipDuration,
-        skipUpdate: disableAnimations,
-        ease: (t) => easeFlip(t),
-        update: (t) => {
-          if (
-            tile.destroyed ||
-            !wrap.scale ||
-            !wrap.skew ||
-            wrap.destroyed ||
-            card.destroyed ||
-            inset.destroyed ||
-            icon.destroyed
-          ) {
-            tile._animating = false;
-            onComplete?.(tile, { face, revealedByPlayer, cancelled: true });
-            return;
-          }
-
-          const widthFactor = Math.max(0.0001, Math.abs(Math.cos(Math.PI * t)));
-
-          const elev = Math.sin(Math.PI * t);
-          const popS = 1 + 0.06 * elev;
-
-          const biasSkew =
-            (tile._tiltDir ?? (startSkew >= 0 ? +1 : -1)) *
-            0.22 *
-            Math.sin(Math.PI * t);
-          const skewOut = startSkew * (1 - t) + biasSkew;
-
-          wrap.scale.x = widthFactor * popS;
-          wrap.scale.y = startScaleY * popS;
-          setSkew(wrap, skewOut);
-
-          if (!swapped && t >= 0.5) {
-            swapped = true;
-            icon.visible = true;
-            const iconSizeFactor = revealedByPlayer
-              ? 1.0
-              : iconRevealedSizeFactor;
-            const maxW = tile._tileSize * iconSizePercentage * iconSizeFactor;
-            const maxH = tile._tileSize * iconSizePercentage * iconSizeFactor;
-            icon.width = maxW;
-            icon.height = maxH;
-
-            if (face === "bomb") {
-              icon.texture = bombTexture;
-              const facePalette = revealedByPlayer
-                ? useSelectionBase
-                  ? AUTO_SELECTION_COLOR
-                  : PALETTE.bombA
-                : PALETTE.bombAUnrevealed;
-              flipFace(card, tileSize, tileSize, radius, facePalette);
-              const insetPalette = revealedByPlayer
-                ? PALETTE.bombB
-                : PALETTE.bombBUnrevealed;
-              flipInset(inset, tileSize, tileSize, radius, pad, insetPalette);
-
-              if (revealedByPlayer) {
-                spawnExplosionSheetOnTile(tile);
-                bombShakeTile(tile);
-                playSoundEffect("bombRevealed");
-              }
-            } else {
-              // Diamond
-              icon.texture = diamondTexture;
-              const facePalette = revealedByPlayer
-                ? useSelectionBase
-                  ? AUTO_SELECTION_COLOR
-                  : PALETTE.safeA
-                : PALETTE.safeAUnrevealed;
-              flipFace(card, tileSize, tileSize, radius, facePalette);
-              const insetPalette = revealedByPlayer
-                ? PALETTE.safeB
-                : PALETTE.safeBUnrevealed;
-              flipInset(inset, tileSize, tileSize, radius, pad, insetPalette);
-
-              if (revealedByPlayer) {
-                const minPitch = Math.max(0.01, Number(diamondRevealPitchMin));
-                const maxPitch = Math.max(0.01, Number(diamondRevealPitchMax));
-                const safeProgress =
-                  totalSafe <= 1
-                    ? 1
-                    : Math.min(
-                        1,
-                        Math.max(0, revealedSafe / Math.max(totalSafe - 1, 1))
-                      );
-                const pitch =
-                  minPitch +
-                  (maxPitch - minPitch) * Ease.easeInQuad(safeProgress);
-                playSoundEffect("diamondRevealed", { speed: pitch });
-              }
-            }
-          }
-        },
-        complete: () => {
-          if (tile.destroyed || !wrap.scale || wrap.destroyed) {
-            tile._animating = false;
-            onComplete?.(tile, { face, revealedByPlayer, cancelled: true });
-            return;
-          }
-
-          forceFlatPose(tile);
-          tile._animating = false;
-          tile.revealed = true;
-
-          if (revealedByPlayer) {
-            if (face === "bomb") {
-              revealAllTiles(tile, { stagger: staggerRevealAll });
-              onGameOver();
-            } else {
-              revealedSafe += 1;
-              if (revealedSafe >= totalSafe) {
-                gameOver = true;
-                revealAllTiles();
-                onWin();
-              }
-            }
-
-            onChange(getState());
-          }
-
-          onComplete?.(tile, { face, revealedByPlayer });
-        },
-      });
-      try {
-        window.__mines_tiles = tiles.length;
-      } catch {}
-    }, flipDelay);
-
-    return true;
-  }
-
-  function revealAllTiles(triggeredBombTile, { stagger = true } = {}) {
-    const unrevealed = tiles.filter((t) => !t.revealed);
-    const bombsNeeded = mines - 1;
-    let available = unrevealed.filter((t) => t !== triggeredBombTile);
-
-    // Shuffle available tiles
-    for (let i = available.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [available[i], available[j]] = [available[j], available[i]];
-      stopHover(available[i]);
-    }
-
-    // Pick bombs
-    const bombTiles = available.slice(0, bombsNeeded);
-    bombTiles.forEach((t) => bombPositions.add(`${t.row},${t.col}`));
-
-    // Reveal all unrevealed tiles
-    unrevealed.forEach((t, idx) => {
-      const key = `${t.row},${t.col}`;
-      const isBomb = bombPositions.has(key);
-
-      if (stagger && revealAllIntervalDelay > 0 && !disableAnimations) {
-        setTimeout(() => {
-          revealTileWithFlip(t, isBomb ? "bomb" : "diamond", false);
-        }, revealAllIntervalDelay * idx);
-      } else {
-        revealTileWithFlip(t, isBomb ? "bomb" : "diamond", false);
-      }
+    const originalScale = card.container.scale.x || 1;
+    tween(app, {
+      duration: 220,
+      ease: Ease.easeInQuad,
+      update: (t) => {
+        const scaleX = lerp(originalScale, 0, t);
+        card.container.scale.x = Math.max(scaleX, 0.01);
+      },
+      complete: () => {
+        flip();
+        tween(app, {
+          duration: 220,
+          ease: Ease.easeOutQuad,
+          update: (t) => {
+            const scaleX = lerp(0, originalScale, t);
+            card.container.scale.x = Math.max(scaleX, 0.01);
+          },
+          complete: () => handleCardRevealed(idx),
+        });
+      },
     });
   }
 
-  function buildBoard({ emitAutoSelectionChange = true } = {}) {
-    clearSelection({ emitAutoSelectionChange });
-    cleanupExplosionSprites();
-    const removed = board.removeChildren();
-    for (const child of removed) {
-      child.destroy({ children: true });
-    }
-    tiles = [];
-    revealedSafe = 0;
-    totalSafe = GRID * GRID - mines;
-
-    const layout = layoutSizes();
-
-    for (let r = 0; r < GRID; r++) {
-      for (let c = 0; c < GRID; c++) {
-        const tile = createTile(r, c, layout.tileSize);
-        board.addChild(tile);
-        tiles.push(tile);
+  function revealAll({ silent = false } = {}) {
+    for (let i = 0; i < cards.length; i += 1) {
+      if (!revealedSet.has(i)) {
+        revealCard(i, { silent });
       }
     }
-
-    layoutBoard(layout);
-
-    if (shouldPlayStartSound) {
-      playSoundEffect("gameStart");
-      shouldPlayStartSound = false;
-    }
   }
 
-  function layoutSizes() {
-    const canvasSize = Math.min(app.renderer.width, app.renderer.height);
-    const topSpace = 16;
-    const boardSpace = Math.max(40, canvasSize - topSpace - 5);
-    const gap = Math.max(1, Math.floor(boardSpace * gapBetweenTiles));
-    const totalGaps = gap * (GRID - 1);
-    const tileSize = Math.floor((boardSpace - totalGaps) / GRID);
-    const contentSize = tileSize * GRID + totalGaps;
-    return { tileSize, gap, contentSize };
-  }
-
-  function layoutBoard(layout = layoutSizes()) {
-    if (!tiles.length) return;
-
-    const { tileSize, gap, contentSize } = layout;
-    const startX = -contentSize / 2;
-    const startY = -contentSize / 2;
-
-    for (const tile of tiles) {
-      const targetSize = tileSize;
-      const baseSize = tile._tileSize || targetSize || 1;
-      const scale = baseSize === 0 ? 1 : targetSize / baseSize;
-
-      tile.scale?.set?.(scale, scale);
-      tile._layoutScale = scale;
-
-      const x = startX + tile.col * (targetSize + gap);
-      const y = startY + tile.row * (targetSize + gap);
-
-      tile.position.set(x, y);
-      tile._baseX = x;
-      tile._baseY = y;
-    }
-  }
-
-  function centerBoard() {
-    board.position.set(app.renderer.width / 2, app.renderer.height / 2);
-    board.scale.set(1);
-    positionWinPopup();
-  }
-
-  function resizeSquare() {
-    const cw = Math.max(1, root.clientWidth || initialSize);
-    const ch = Math.max(1, root.clientHeight || cw);
-
-    const size = Math.floor(Math.min(cw, ch));
-    app.renderer.resize(size, size);
-    if (!tiles.length) {
-      buildBoard();
-    } else {
-      layoutBoard();
-    }
-    centerBoard();
-    positionWinPopup();
-  }
-
-  function enterWaitingState(tile) {
-    waitingForChoice = true;
-    selectedTile = tile;
-
-    if (onCardSelected) {
-      onCardSelected({
-        row: tile.row,
-        col: tile.col,
-        tile: tile,
+  function handleCardRevealed(idx) {
+    const card = cards[idx];
+    const typeId = cardAssignments[idx];
+    onCardRevealed({ index: idx, typeId });
+    if (revealedSet.size >= CARD_COUNT) {
+      interactionEnabled = false;
+      if (currentRoundResult === "win") {
+        const winTexture = textures[currentWinningTypeId] ?? Texture.WHITE;
+        showOverlay(winTexture);
+      } else if (currentRoundResult === "lost") {
+        playSound(SOUND_ALIASES.lost);
+      }
+      onRoundComplete({
+        result: currentRoundResult,
+        winningCardTypeId: currentWinningTypeId,
       });
     }
-
-    const sy = getSkew(tile._wrap) || 0;
-    tile._tiltDir = sy >= 0 ? +1 : -1;
-
-    wiggleTile(tile);
-    onChange(getState());
   }
 
-  function clearSelection({ emitAutoSelectionChange = true } = {}) {
-    if (selectedTile && !selectedTile.revealed) {
-      hoverTile(selectedTile, false);
-      refreshTileTint(selectedTile);
+  function reset({ keepAssignments = false } = {}) {
+    revealedSet = new Set();
+    interactionEnabled = false;
+    currentRoundResult = null;
+    currentWinningTypeId = null;
+    hideOverlay();
+    for (const card of cards) {
+      cardAssignments[card.index] = keepAssignments
+        ? cardAssignments[card.index]
+        : null;
+      setCardAppearance(card, false);
     }
-    waitingForChoice = false;
-    selectedTile = null;
-    clearAutoSelections({ emit: emitAutoSelectionChange });
   }
 
-  function applyAutoSelectionsFromCoordinates(
-    coordinates = [],
-    { emit = true } = {}
-  ) {
-    const list = Array.isArray(coordinates) ? coordinates : [];
-    if (list.length === 0) {
-      clearAutoSelections({ emit });
-      return 0;
+  function setRound({ assignments, result, winningCardTypeId }) {
+    cardAssignments = Array.isArray(assignments)
+      ? [...assignments]
+      : new Array(CARD_COUNT).fill(0);
+    currentRoundResult = result ?? null;
+    currentWinningTypeId = winningCardTypeId ?? null;
+    revealedSet = new Set();
+    interactionEnabled = false;
+    hideOverlay();
+    for (let i = 0; i < cards.length; i += 1) {
+      setCardType(i, cardAssignments[i] ?? 0);
+      setCardAppearance(cards[i], false);
     }
+    playSound(SOUND_ALIASES.start);
+  }
 
-    const tileMap = new Map(
-      tiles.map((tile) => [`${tile.row},${tile.col}`, tile])
-    );
+  function setInteractionsEnabled(value) {
+    interactionEnabled = Boolean(value);
+    board.eventMode = interactionEnabled ? "static" : "none";
+    for (const card of cards) {
+      card.container.eventMode = interactionEnabled ? "static" : "none";
+    }
+  }
 
-    clearAutoSelections({ emit: false });
+  function setAnimationsEnabled(value) {
+    animationsEnabled = Boolean(value);
+  }
 
-    let applied = 0;
-    for (const entry of list) {
-      const key = `${entry.row},${entry.col}`;
-      const tile = tileMap.get(key);
-      if (!tile || tile.revealed || tile._animating) {
-        continue;
+  function resize() {
+    const width = root.clientWidth || initialSize;
+    const height = root.clientHeight || initialSize;
+    app.renderer.resize(width, height);
+    overlayBackground.width = width;
+    overlayBackground.height = height;
+    overlayContent.x = width / 2;
+    overlayContent.y = height / 2;
+
+    const previousAssignments = [...cardAssignments];
+    const previouslyRevealed = new Set(revealedSet);
+    revealedSet = new Set();
+
+    buildBoard();
+
+    for (let i = 0; i < cards.length; i += 1) {
+      setCardType(i, previousAssignments[i] ?? 0);
+      const revealed = previouslyRevealed.has(i);
+      setCardAppearance(cards[i], revealed);
+      if (revealed) {
+        revealedSet.add(i);
       }
-      setAutoTileSelected(tile, true, { emit: false });
-      applied += 1;
     }
+  }
 
-    if (emit) {
-      notifyAutoSelectionChange();
+  const resizeObserver = new ResizeObserver(() => resize());
+  resizeObserver.observe(root);
+  resize();
+
+  function destroy() {
+    resizeObserver.disconnect();
+    app.destroy(true);
+    if (app.canvas?.parentNode === root) {
+      root.removeChild(app.canvas);
     }
-
-    return applied;
   }
-
-  function revealRemainingTiles() {
-    revealAllTiles();
-  }
-
-  function getAutoResetDelay() {
-    return autoResetDelayMs;
-  }
-
-  resizeSquare();
-  // Kick one extra layout tick after mount to cover late size changes
-  setTimeout(resizeSquare, 0);
-
-  const ro = new ResizeObserver(() => resizeSquare());
-  ro.observe(root);
 
   return {
     app,
     reset,
-    setMines,
-    getState,
-    destroy,
-    setSelectedCardIsDiamond,
-    SetSelectedCardIsBomb,
-    selectRandomTile,
-    getAutoSelections: getAutoSelectionCoordinates,
-    revealAutoSelections,
-    clearAutoSelections,
-    applyAutoSelections: applyAutoSelectionsFromCoordinates,
-    revealRemainingTiles,
-    getAutoResetDelay,
-    showWinPopup: spawnWinPopup,
+    setRound,
+    revealCard,
+    revealAll,
+    setInteractionsEnabled,
     setAnimationsEnabled,
+    destroy,
+    getAssignments: () => [...cardAssignments],
+    getRevealedCount: () => revealedSet.size,
+    getCardTextures: () => textures,
   };
 }

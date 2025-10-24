@@ -234,6 +234,12 @@
   gap: 8px;
 }
 
+.server-dummy__controls-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .server-dummy__controls-group-title {
   font-size: 12px;
   font-weight: 700;
@@ -242,9 +248,27 @@
   color: rgba(165, 196, 214, 0.8);
 }
 
+.server-dummy__inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.server-dummy__inline-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(165, 196, 214, 0.8);
+}
+
 .server-dummy__controls-group-buttons {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.server-dummy__input-row {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 
