@@ -36,6 +36,43 @@ function ensureRelay(relay) {
   return relay;
 }
 
+function createInputRow({
+  placeholder,
+  type = "text",
+  step,
+  inputMode,
+  mountPoint,
+  buttonLabel,
+  onSubmit,
+}) {
+  const row = document.createElement("div");
+  row.className = "server-dummy__input-row";
+
+  const input = document.createElement("input");
+  input.type = type;
+  input.placeholder = placeholder ?? "";
+  input.step = step ?? undefined;
+  if (inputMode) {
+    input.inputMode = inputMode;
+  }
+  input.className = "server-dummy__input";
+  row.appendChild(input);
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = buttonLabel ?? "Submit";
+  button.className = "server-dummy__button";
+  button.addEventListener("click", () => {
+    if (typeof onSubmit === "function") {
+      onSubmit({ input });
+    }
+  });
+  row.appendChild(button);
+
+  mountPoint.appendChild(row);
+  return { input, button };
+}
+
 export function createServerDummy(relay, options = {}) {
   const serverRelay = ensureRelay(relay);
   const mount = options.mount ?? document.querySelector(".app-wrapper") ?? document.body;
@@ -121,54 +158,81 @@ export function createServerDummy(relay, options = {}) {
   controlsSection.className = "server-dummy__controls";
   body.appendChild(controlsSection);
 
-  function createControlsGroup(title) {
-    const group = document.createElement("div");
-    group.className = "server-dummy__controls-group";
+  const actionsGroup = document.createElement("div");
+  actionsGroup.className = "server-dummy__controls-group";
+  controlsSection.appendChild(actionsGroup);
 
-    const heading = document.createElement("div");
-    heading.className = "server-dummy__controls-group-title";
-    heading.textContent = title;
-    group.appendChild(heading);
+  const actionsTitle = document.createElement("div");
+  actionsTitle.className = "server-dummy__controls-group-title";
+  actionsTitle.textContent = "ACTIONS";
+  actionsGroup.appendChild(actionsTitle);
 
-    const buttonsContainer = document.createElement("div");
-    buttonsContainer.className = "server-dummy__controls-group-buttons";
-    group.appendChild(buttonsContainer);
+  const actionsBody = document.createElement("div");
+  actionsBody.className = "server-dummy__controls-group-body";
+  actionsGroup.appendChild(actionsBody);
 
-    controlsSection.appendChild(group);
-    return buttonsContainer;
-  }
+  const winningInputRow = document.createElement("div");
+  winningInputRow.className = "server-dummy__inline-row";
+  const winningLabel = document.createElement("label");
+  winningLabel.textContent = "Winning card type id";
+  winningLabel.className = "server-dummy__inline-label";
+  winningLabel.setAttribute("for", "server-winning-card-input");
+  winningInputRow.appendChild(winningLabel);
 
-  const manualControls = createControlsGroup("Manual Actions");
-  const autoControls = createControlsGroup("Auto Actions");
-  const profitControls = createControlsGroup("PROFIT");
+  const winningInput = document.createElement("input");
+  winningInput.type = "number";
+  winningInput.id = "server-winning-card-input";
+  winningInput.placeholder = "0";
+  winningInput.inputMode = "numeric";
+  winningInput.className = "server-dummy__input";
+  winningInputRow.appendChild(winningInput);
+  actionsBody.appendChild(winningInputRow);
 
-  const buttons = [];
-  const inputs = [];
+  const actionsButtons = document.createElement("div");
+  actionsButtons.className = "server-dummy__controls-group-buttons";
+  actionsBody.appendChild(actionsButtons);
 
-  createInputRow({
-    placeholder: "Profit multiplier",
-    type: "number",
-    step: "0.01",
-    inputMode: "decimal",
-    mountPoint: profitControls,
-    buttonLabel: "Update Multiplier",
-    onSubmit: ({ input }) => {
-      const raw = input.value.trim();
-      const payload = { value: raw === "" ? null : raw };
-      const numeric = Number(raw);
-      if (Number.isFinite(numeric)) {
-        payload.numericValue = numeric;
+  const createActionButton = (label, result) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.className = "server-dummy__button";
+    button.addEventListener("click", () => {
+      const raw = winningInput.value.trim();
+      const payload = { result };
+      if (raw !== "" && result === "win") {
+        const numeric = Number(raw);
+        if (Number.isFinite(numeric)) {
+          payload.winningCardTypeId = numeric;
+        }
       }
-      serverRelay.deliver("profit:update-multiplier", payload);
-      input.value = "";
-    },
-  });
+      serverRelay.deliver("bet-result", payload);
+    });
+    actionsButtons.appendChild(button);
+    return button;
+  };
+
+  createActionButton("On Bet Won", "win");
+  createActionButton("On Bet Lost", "lost");
+
+  const profitGroup = document.createElement("div");
+  profitGroup.className = "server-dummy__controls-group";
+  controlsSection.appendChild(profitGroup);
+
+  const profitTitle = document.createElement("div");
+  profitTitle.className = "server-dummy__controls-group-title";
+  profitTitle.textContent = "PROFIT";
+  profitGroup.appendChild(profitTitle);
+
+  const profitBody = document.createElement("div");
+  profitBody.className = "server-dummy__controls-group-body";
+  profitGroup.appendChild(profitBody);
 
   createInputRow({
     placeholder: "Total profit",
     type: "text",
     inputMode: "decimal",
-    mountPoint: profitControls,
+    mountPoint: profitBody,
     buttonLabel: "Update Profit",
     onSubmit: ({ input }) => {
       const raw = input.value.trim();
@@ -188,202 +252,28 @@ export function createServerDummy(relay, options = {}) {
     logList.scrollTop = logList.scrollHeight;
   }
 
-  function createButton(label, onClick, mountPoint = controlsSection) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = label;
-    button.className = "server-dummy__button";
-    button.addEventListener("click", () => {
-      if (typeof onClick === "function") {
-        onClick();
-      }
-    });
-    mountPoint.appendChild(button);
-    buttons.push(button);
-    return button;
-  }
-
-  function createInputRow({
-    placeholder,
-    type = "text",
-    step,
-    inputMode,
-    onSubmit,
-    mountPoint,
-    buttonLabel,
-  }) {
-    const row = document.createElement("div");
-    row.className = "server-dummy__field-row";
-    (mountPoint ?? controlsSection).appendChild(row);
-
-    const input = document.createElement("input");
-    input.type = type;
-    input.placeholder = placeholder;
-    input.className = "server-dummy__input";
-    if (step !== undefined) {
-      input.step = step;
-    }
-    if (inputMode) {
-      input.inputMode = inputMode;
-    }
-    row.appendChild(input);
-    inputs.push(input);
-
-    const button = createButton(
-      buttonLabel ?? "Submit",
-      () => {
-        if (typeof onSubmit === "function") {
-          onSubmit({ input, button });
-        }
-      },
-      row
-    );
-
-    if (typeof onSubmit === "function") {
-      input.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          button.click();
-        }
-      });
-    }
-
-    return { row, input, button };
-  }
-
-  const state = {
-    lastManualSelection: null,
-    lastAutoSelections: [],
-  };
-
-  createButton(
-    "Start Bet",
-    () => {
-      serverRelay.deliver("start-bet", {});
-    },
-    manualControls
-  );
-
-  createButton(
-    "On Bet Won",
-    () => {
-      serverRelay.deliver("bet-result", {
-        result: "win",
-        selection: state.lastManualSelection,
-      });
-    },
-    manualControls
-  );
-
-  createButton(
-    "On Bet Lost",
-    () => {
-      serverRelay.deliver("bet-result", {
-        result: "lost",
-        selection: state.lastManualSelection,
-      });
-    },
-    manualControls
-  );
-
-  createButton(
-    "Cashout",
-    () => {
-      serverRelay.deliver("cashout", {});
-    },
-    manualControls
-  );
-
-  createButton(
-    "On Autobet Won",
-    () => {
-      const selections = state.lastAutoSelections ?? [];
-      const results = selections.map((selection) => ({
-        row: selection?.row,
-        col: selection?.col,
-        result: "win",
-      }));
-      serverRelay.deliver("auto-bet-result", { results });
-    },
-    autoControls
-  );
-
-  createButton(
-    "On Autobet Lost",
-    () => {
-      const selections = state.lastAutoSelections ?? [];
-      const results = selections.map((selection, index) => ({
-        row: selection?.row,
-        col: selection?.col,
-        result: index === 0 ? "lost" : "win",
-      }));
-      serverRelay.deliver("auto-bet-result", { results });
-    },
-    autoControls
-  );
-
-  createButton(
-    "Stop Autobet",
-    () => {
-      serverRelay.deliver("stop-autobet", { completed: false });
-    },
-    autoControls
-  );
-
-  mount.prepend(container);
-
-  function setDemoMode(enabled) {
-    const normalized = Boolean(enabled);
-    if (toggleInput.checked !== normalized) {
-      toggleInput.checked = normalized;
-    }
-    buttons.forEach((button) => {
-      button.disabled = normalized;
-    });
-    inputs.forEach((input) => {
-      input.disabled = normalized;
-    });
-  }
-
-  setDemoMode(initialDemoMode);
-
-  const outgoingHandler = (event) => {
+  serverRelay.addEventListener("outgoing", (event) => {
     const { type, payload } = event.detail ?? {};
     appendLog("outgoing", type, payload);
+  });
 
-    switch (type) {
-      case "game:manual-selection":
-        state.lastManualSelection = payload ?? null;
-        break;
-      case "game:auto-selections":
-        state.lastAutoSelections = Array.isArray(payload?.selections)
-          ? payload.selections.map((selection) => ({ ...selection }))
-          : [];
-        break;
-      default:
-        break;
-    }
-  };
-
-  const incomingHandler = (event) => {
+  serverRelay.addEventListener("incoming", (event) => {
     const { type, payload } = event.detail ?? {};
     appendLog("incoming", type, payload);
+  });
+
+  serverRelay.setDemoMode(initialDemoMode);
+
+  container.setDemoMode = (value) => {
+    toggleInput.checked = Boolean(value);
   };
 
-  serverRelay.addEventListener("outgoing", outgoingHandler);
-  serverRelay.addEventListener("incoming", incomingHandler);
-
-  serverRelay.addEventListener("demomodechange", (event) => {
-    setDemoMode(Boolean(event.detail?.value));
-  });
+  mount.appendChild(container);
 
   return {
     element: container,
-    setDemoMode,
-    destroy() {
-      serverRelay.removeEventListener("outgoing", outgoingHandler);
-      serverRelay.removeEventListener("incoming", incomingHandler);
-      container.remove();
+    setDemoMode: (value) => {
+      toggleInput.checked = Boolean(value);
     },
   };
 }

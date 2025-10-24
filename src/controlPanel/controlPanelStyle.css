@@ -186,6 +186,59 @@
   background: #091b26;
 }
 
+.control-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.control-action-btn {
+  flex: 1 1 120px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #eaff00 0%, #eaff00 100%);
+  color: #091b26;
+  font-size: 1.05rem;
+  font-weight: 700;
+  padding: 16px;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  box-shadow: var(--control-elevation-shadow-strong);
+}
+
+.control-action-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--control-elevation-shadow-hover),
+    0 12px 24px rgba(234, 255, 0, 0.25);
+}
+
+.control-action-btn.is-disabled,
+.control-action-btn:disabled {
+  background: linear-gradient(135deg, #656b00 0%, #656b00 100%);
+  cursor: not-allowed;
+  opacity: 0.6;
+  transform: none;
+  box-shadow: none;
+}
+
+.control-action-btn--secondary {
+  background: #223845;
+  color: #f5f6ff;
+  box-shadow: var(--control-elevation-shadow-strong);
+}
+
+.control-action-btn--secondary:hover {
+  background: #2b4a5a;
+  box-shadow: var(--control-elevation-shadow-hover);
+}
+
+.control-action-btn--secondary.is-disabled,
+.control-action-btn--secondary:disabled {
+  background: #1a2b35;
+  color: #4c5d68;
+  opacity: 1;
+}
+
 .control-bet-input-field {
   position: relative;
   display: flex;
@@ -361,6 +414,24 @@
   width: 20px;
   height: 20px;
   opacity: 0.85;
+}
+
+.control-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.control-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #223845;
+  color: #9a9da6;
+  font-weight: 600;
+  padding: 12px 16px;
+  border-radius: 8px;
 }
 
 .control-panel-footer {
