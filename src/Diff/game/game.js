@@ -1624,21 +1624,31 @@ export async function createGame(mount, opts = {}) {
   function revealAllTiles(triggeredBombTile, { stagger = true } = {}) {
     const unrevealed = tiles.filter((t) => !t.revealed);
     const bombsNeeded = mines - 1;
-    let available = unrevealed.filter((t) => t !== triggeredBombTile);
+    const available = unrevealed.filter((t) => t !== triggeredBombTile);
 
-    // Shuffle available tiles
-    for (let i = available.length - 1; i > 0; i--) {
+    available.forEach((tile) => stopHover(tile));
+
+    const shuffledAvailable = [...available];
+    for (let i = shuffledAvailable.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [available[i], available[j]] = [available[j], available[i]];
-      stopHover(available[i]);
+      [shuffledAvailable[i], shuffledAvailable[j]] = [
+        shuffledAvailable[j],
+        shuffledAvailable[i],
+      ];
     }
 
-    // Pick bombs
-    const bombTiles = available.slice(0, bombsNeeded);
+    const bombTiles = shuffledAvailable.slice(0, bombsNeeded);
     bombTiles.forEach((t) => bombPositions.add(`${t.row},${t.col}`));
 
     // Reveal all unrevealed tiles
-    unrevealed.forEach((t, idx) => {
+    const ordered = [...unrevealed].sort((a, b) => {
+      if (a.row === b.row) {
+        return a.col - b.col;
+      }
+      return a.row - b.row;
+    });
+
+    ordered.forEach((t, idx) => {
       const key = `${t.row},${t.col}`;
       const isBomb = bombPositions.has(key);
 

@@ -529,13 +529,14 @@ export async function createGame(mount, opts = {}) {
         !excludedCards.has(card)
     );
     if (!unrevealed.length) return;
-    const shuffled = [...unrevealed];
-    for (let i = shuffled.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
+    const ordered = [...unrevealed].sort((a, b) => {
+      if (a.row === b.row) {
+        return a.col - b.col;
+      }
+      return a.row - b.row;
+    });
 
-    shuffled.forEach((card, index) => {
+    ordered.forEach((card, index) => {
       const assignedFace = currentAssignments.get(`${card.row},${card.col}`) ?? null;
       const delay = disableAnimations ? 0 : revealAllIntervalDelay * index;
       setTimeout(() => {
