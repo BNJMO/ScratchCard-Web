@@ -3,12 +3,16 @@ import { ControlPanel } from "./controlPanel/controlPanel.js";
 import { ServerRelay } from "./serverRelay.js";
 import { createServerDummy } from "./serverDummy/serverDummy.js";
 
+import diamondTextureUrl from "../assets/sprites/Diamond.png";
+import bombTextureUrl from "../assets/sprites/Bomb.png";
+import explosionSheetUrl from "../assets/sprites/Explosion_Spritesheet.png";
 import tileTapDownSoundUrl from "../assets/sounds/TileTapDown.wav";
 import tileFlipSoundUrl from "../assets/sounds/TileFlip.wav";
 import tileHoverSoundUrl from "../assets/sounds/TileHover.wav";
+import diamondRevealedSoundUrl from "../assets/sounds/DiamondRevealed.wav";
+import bombRevealedSoundUrl from "../assets/sounds/BombRevealed.wav";
+import winSoundUrl from "../assets/sounds/Win.wav";
 import gameStartSoundUrl from "../assets/sounds/GameStart.wav";
-import roundWinSoundUrl from "../assets/sounds/Win.wav";
-import roundLostSoundUrl from "../assets/sounds/Lost.wav";
 
 let game;
 let controlPanel;
@@ -24,22 +28,24 @@ let selectionDelayHandle = null;
 let selectionPending = false;
 let minesSelectionLocked = false;
 let controlPanelMode = "manual";
+let autoSelectionCount = 0;
+let storedAutoSelections = [];
 let autoRunActive = false;
+let autoRunFlag = false;
 let autoRoundInProgress = false;
+let autoBetsRemaining = Infinity;
 let autoResetTimer = null;
-let autoStopPending = false;
+let autoStopShouldComplete = false;
+let autoStopFinishing = false;
 let manualRoundNeedsReset = false;
-
-const GRID_SIZE = 3;
-let availableCardTypes = [];
-let currentBetResult = null;
-const currentRoundAssignments = new Map();
 
 let totalProfitMultiplierValue = 1;
 let totalProfitAmountDisplayValue = "0.00000000";
 
-const AUTO_RESET_DELAY_MS = 1000;
+const AUTO_RESET_DELAY_MS = 1500;
 let autoResetDelayMs = AUTO_RESET_DELAY_MS;
+
+const SERVER_RESPONSE_DELAY_MS = 250;
 
 function withRelaySuppressed(callback) {
   suppressRelay = true;
@@ -122,16 +128,14 @@ function setDemoMode(value) {
 }
 
 function applyServerReveal(payload = {}) {
+  const result = String(payload?.result ?? "").toLowerCase();
   clearSelectionDelay();
   selectionPending = false;
-  const contentKey = payload?.contentKey ?? payload?.result ?? null;
-  if (typeof payload?.row === "number" && typeof payload?.col === "number") {
-    currentRoundAssignments.set(
-      getCardKey(payload.row, payload.col),
-      contentKey
-    );
+  if (result === "lost") {
+    game?.SetSelectedCardIsBomb?.();
+  } else {
+    game?.setSelectedCardIsDiamond?.();
   }
-  game?.revealSelectedCard?.(contentKey);
 }
 
 function applyAutoResultsFromServer(results = []) {
@@ -140,14 +144,6 @@ function applyAutoResultsFromServer(results = []) {
   if (!Array.isArray(results) || results.length === 0) {
     return;
   }
-  results.forEach((entry) => {
-    if (typeof entry?.row === "number" && typeof entry?.col === "number") {
-      currentRoundAssignments.set(
-        getCardKey(entry.row, entry.col),
-        entry.contentKey ?? entry.result ?? null
-      );
-    }
-  });
   game?.revealAutoSelections?.(results);
 }
 
@@ -174,7 +170,6 @@ serverRelay.addEventListener("incoming", (event) => {
       case "start-bet":
         performBet();
         setControlPanelRandomState(true);
-        setControlPanelRevealAllState(true);
         break;
       case "bet-result":
         applyServerReveal(payload);
@@ -183,13 +178,10 @@ serverRelay.addEventListener("incoming", (event) => {
         applyAutoResultsFromServer(payload?.results);
         break;
       case "stop-autobet":
-        stopAutoBetProcess({
-          reason: typeof payload?.reason === "string" ? payload.reason : "user",
-          completed: Boolean(payload?.completed),
-        });
+        stopAutoBetProcess({ completed: Boolean(payload?.completed) });
         break;
       case "finalize-bet":
-        finalizeRound();
+        finalizeRound({ preserveAutoSelections: controlPanelMode === "auto" });
         break;
       case "cashout":
         if (roundActive && cashoutAvailable) {
@@ -227,7 +219,7 @@ serverRelay.addEventListener("demomodechange", (event) => {
 });
 
 function setControlPanelBetMode(mode) {
-  betButtonMode = "bet";
+  betButtonMode = mode === "bet" ? "bet" : "cashout";
   controlPanel?.setBetButtonMode?.(betButtonMode);
 }
 
@@ -243,15 +235,10 @@ function setControlPanelRandomState(isClickable) {
   );
 }
 
-function setControlPanelRevealAllState(isClickable) {
-  controlPanel?.setRevealAllState?.(
-    isClickable ? "clickable" : "non-clickable"
-  );
-}
-
 function setControlPanelAutoStartState(isClickable) {
+  const shouldEnable = isClickable && !autoStopFinishing;
   controlPanel?.setAutoStartButtonState?.(
-    isClickable ? "clickable" : "non-clickable"
+    shouldEnable ? "clickable" : "non-clickable"
   );
 }
 
@@ -264,7 +251,6 @@ function setControlPanelMinesState(isClickable) {
 function disableServerRoundSetupControls() {
   setControlPanelBetState(false);
   setControlPanelRandomState(false);
-  setControlPanelRevealAllState(false);
   setControlPanelMinesState(false);
   controlPanel?.setModeToggleClickable?.(false);
   controlPanel?.setBetControlsClickable?.(false);
@@ -318,7 +304,6 @@ function beginSelectionDelay() {
   selectionPending = true;
   setControlPanelBetState(false);
   setControlPanelRandomState(false);
-  setControlPanelRevealAllState(false);
 }
 
 function setAutoRunUIState(active) {
@@ -327,8 +312,13 @@ function setAutoRunUIState(active) {
   }
 
   if (active) {
-    controlPanel.setAutoStartButtonMode?.("stop");
-    setControlPanelAutoStartState(true);
+    if (autoStopFinishing) {
+      controlPanel.setAutoStartButtonMode?.("finish");
+      setControlPanelAutoStartState(false);
+    } else {
+      controlPanel.setAutoStartButtonMode?.("stop");
+      setControlPanelAutoStartState(true);
+    }
     controlPanel.setModeToggleClickable?.(false);
     controlPanel.setBetControlsClickable?.(false);
     setControlPanelMinesState(false);
@@ -339,138 +329,265 @@ function setAutoRunUIState(active) {
     controlPanel.setStopOnLossClickable?.(false);
   } else {
     controlPanel.setAutoStartButtonMode?.("start");
-    const canClick = controlPanelMode === "auto";
-    setControlPanelAutoStartState(canClick);
+    autoStopFinishing = false;
+    setControlPanelAutoStartState(true);
     controlPanel.setModeToggleClickable?.(true);
     controlPanel.setBetControlsClickable?.(true);
-    setControlPanelMinesState(true);
     controlPanel.setNumberOfBetsClickable?.(true);
     controlPanel.setAdvancedToggleClickable?.(true);
     controlPanel.setAdvancedStrategyControlsClickable?.(true);
     controlPanel.setStopOnProfitClickable?.(true);
     controlPanel.setStopOnLossClickable?.(true);
+    if (roundActive && !minesSelectionLocked) {
+      setControlPanelMinesState(true);
+    }
+    handleAutoSelectionChange(autoSelectionCount);
   }
 }
 
-function setAutoRunFinishingState() {
-  if (!controlPanel) {
+function startAutoRoundIfNeeded() {
+  if (storedAutoSelections.length === 0) {
+    return false;
+  }
+
+  if (!roundActive) {
+    game?.reset?.({ preserveAutoSelections: true });
+    prepareForNewRoundState({ preserveAutoSelections: true });
+  }
+
+  if (typeof game?.applyAutoSelections === "function") {
+    game.applyAutoSelections(storedAutoSelections, { emit: true });
+  }
+
+  return true;
+}
+
+function executeAutoBetRound({ ensurePrepared = true } = {}) {
+  if (!autoRunActive) {
     return;
   }
 
-  controlPanel.setAutoStartButtonMode?.("finish");
-  setControlPanelAutoStartState(false);
-  controlPanel.setModeToggleClickable?.(false);
-  controlPanel.setBetControlsClickable?.(false);
-  setControlPanelMinesState(false);
-  controlPanel.setNumberOfBetsClickable?.(false);
-  controlPanel.setAdvancedToggleClickable?.(false);
-  controlPanel.setAdvancedStrategyControlsClickable?.(false);
-  controlPanel.setStopOnProfitClickable?.(false);
-  controlPanel.setStopOnLossClickable?.(false);
-}
-
-function clearAutoRoundTimer() {
-  if (autoResetTimer) {
-    clearTimeout(autoResetTimer);
-    autoResetTimer = null;
+  if (storedAutoSelections.length === 0) {
+    stopAutoBetProcess();
+    return;
   }
-}
 
-function determineDemoBetResult() {
-  const lostProbability = Math.random() < 0.4;
-  const betResult = lostProbability ? "lost" : "win";
-  console.log(`[Scratch Cards] Bet result: ${betResult}`);
-  return betResult;
-}
+  if (ensurePrepared && !startAutoRoundIfNeeded()) {
+    stopAutoBetProcess({ completed: autoStopShouldComplete });
+    autoStopShouldComplete = false;
+    return;
+  }
 
-function executeAutoBetRound() {
-  if (!autoRunActive) {
+  const selections = storedAutoSelections.map((selection) => ({
+    ...selection,
+  }));
+  if (selections.length === 0) {
+    stopAutoBetProcess();
     return;
   }
 
   autoRoundInProgress = true;
+  selectionPending = true;
+  setControlPanelBetState(false);
+  setControlPanelRandomState(false);
+  setControlPanelMinesState(false);
+  setGameBoardInteractivity(false);
+  setControlPanelAutoStartState(true);
+
+  clearSelectionDelay();
 
   if (!demoMode && !suppressRelay) {
-    sendRelayMessage("game:auto-round-request", {});
+    const payload = {
+      selections: selections.map((selection) => ({
+        ...selection,
+      })),
+    };
+    sendRelayMessage("game:auto-round-request", payload);
     return;
   }
 
-  const betResult = determineDemoBetResult();
-  handleBet(betResult);
+  const results = [];
+  let bombAssigned = false;
 
-  setTimeout(() => {
-    if (!autoRunActive) {
+  for (const selection of selections) {
+    const revealBomb = !bombAssigned && Math.random() < 0.15;
+    if (revealBomb) {
+      bombAssigned = true;
+    }
+    results.push({
+      row: selection.row,
+      col: selection.col,
+      result: revealBomb ? "bomb" : "diamond",
+    });
+  }
+
+  selectionDelayHandle = setTimeout(() => {
+    selectionDelayHandle = null;
+    selectionPending = false;
+
+    if (!autoRunActive || !roundActive) {
+      autoRoundInProgress = false;
       return;
     }
-    game?.revealRemainingTiles?.();
-  }, 0);
+
+    game?.revealAutoSelections?.(results);
+  }, SERVER_RESPONSE_DELAY_MS);
 }
 
-function scheduleNextAutoBetRound(delay = autoResetDelayMs) {
+function scheduleNextAutoBetRound() {
   if (!autoRunActive) {
     return;
   }
 
-  clearAutoRoundTimer();
+  clearTimeout(autoResetTimer);
   autoResetTimer = setTimeout(() => {
     autoResetTimer = null;
+
     if (!autoRunActive) {
       return;
     }
-    executeAutoBetRound();
-  }, delay);
+
+    if (!autoRunFlag || autoStopShouldComplete) {
+      if (
+        !demoMode &&
+        !suppressRelay &&
+        controlPanelMode === "auto" &&
+        autoStopFinishing
+      ) {
+        return;
+      }
+
+      const completed = autoStopShouldComplete;
+      autoStopShouldComplete = false;
+      stopAutoBetProcess({ completed });
+      return;
+    }
+
+    autoStopFinishing = false;
+    setAutoRunUIState(true);
+    executeAutoBetRound({ ensurePrepared: true });
+  }, autoResetDelayMs);
 }
 
-function startAutoBetProcess() {
-  if (autoRunActive || controlPanelMode !== "auto") {
+function handleAutoRoundFinished() {
+  autoRoundInProgress = false;
+
+  if (!autoRunActive) {
     return;
   }
 
+  if (Number.isFinite(autoBetsRemaining)) {
+    autoBetsRemaining = Math.max(0, autoBetsRemaining - 1);
+    controlPanel?.setNumberOfBetsValue?.(autoBetsRemaining);
+  }
+
+  if (Number.isFinite(autoBetsRemaining) && autoBetsRemaining <= 0) {
+    const shouldSignalCompletion = !autoStopShouldComplete;
+    autoRunFlag = false;
+    autoStopShouldComplete = true;
+    autoStopFinishing = true;
+    setAutoRunUIState(true);
+
+    if (shouldSignalCompletion && !demoMode && !suppressRelay) {
+      sendRelayMessage("action:stop-autobet", {
+        reason: "completed",
+        completed: true,
+      });
+    }
+  }
+
+  scheduleNextAutoBetRound();
+}
+
+function beginAutoBetProcess() {
+  if (selectionPending || autoSelectionCount <= 0) {
+    return;
+  }
+
+  const selections = game?.getAutoSelections?.() ?? storedAutoSelections;
+  if (!Array.isArray(selections) || selections.length === 0) {
+    return;
+  }
+
+  storedAutoSelections = selections.map((selection) => ({ ...selection }));
+
+  const configuredBets = controlPanel?.getNumberOfBetsValue?.();
+  if (Number.isFinite(configuredBets) && configuredBets > 0) {
+    autoBetsRemaining = Math.floor(configuredBets);
+    controlPanel?.setNumberOfBetsValue?.(autoBetsRemaining);
+  } else {
+    autoBetsRemaining = Infinity;
+  }
+
+  autoRunFlag = true;
   autoRunActive = true;
   autoRoundInProgress = false;
-  autoStopPending = false;
+  autoStopShouldComplete = false;
+  autoStopFinishing = false;
 
   if (!demoMode && !suppressRelay) {
-    const payload = { numberOfBets: 0 };
-    sendRelayMessage("control:start-autobet", payload);
-    sendRelayMessage("action:start-autobet", payload);
+    const createAutobetPayload = () => ({
+      selections: storedAutoSelections.map((selection) => ({
+        ...selection,
+      })),
+      numberOfBets: Number.isFinite(autoBetsRemaining)
+        ? autoBetsRemaining
+        : 0,
+    });
+    sendRelayMessage("control:start-autobet", createAutobetPayload());
+    sendRelayMessage("action:start-autobet", createAutobetPayload());
   }
 
   setAutoRunUIState(true);
   executeAutoBetRound();
 }
 
-function stopAutoBetProcess({ reason = "user", completed = false } = {}) {
-  clearSelectionDelay();
-  clearAutoRoundTimer();
+function stopAutoBetProcess({ completed = false } = {}) {
+  if (selectionDelayHandle) {
+    clearTimeout(selectionDelayHandle);
+    selectionDelayHandle = null;
+    selectionPending = false;
+  }
+
+  clearTimeout(autoResetTimer);
+  autoResetTimer = null;
 
   const wasActive = autoRunActive;
   autoRunActive = false;
+  autoRunFlag = false;
   autoRoundInProgress = false;
-
-  if (!demoMode && !suppressRelay && wasActive) {
-    sendRelayMessage("action:stop-autobet", {
-      reason,
-      completed,
-    });
-  }
-
-  const shouldWaitForRound = roundActive && !completed;
-
-  if (shouldWaitForRound) {
-    autoStopPending = true;
-    setAutoRunFinishingState();
-    game?.revealRemainingTiles?.();
+  autoStopShouldComplete = false;
+  if (!wasActive && !completed) {
+    autoStopFinishing = false;
+    handleAutoSelectionChange(autoSelectionCount);
     return;
   }
 
-  autoStopPending = false;
-
-  if (roundActive) {
-    finalizeRound();
+  const shouldPreserveSelections = controlPanelMode === "auto";
+  if (shouldPreserveSelections) {
+    const selections = game?.getAutoSelections?.();
+    if (Array.isArray(selections) && selections.length > 0) {
+      storedAutoSelections = selections.map((selection) => ({ ...selection }));
+    }
   }
 
+  finalizeRound({ preserveAutoSelections: shouldPreserveSelections });
+
+  game?.reset?.({ preserveAutoSelections: shouldPreserveSelections });
+
+  autoStopFinishing = false;
   setAutoRunUIState(false);
+
+  if (shouldPreserveSelections) {
+    prepareForNewRoundState({ preserveAutoSelections: true });
+    if (
+      Array.isArray(storedAutoSelections) &&
+      storedAutoSelections.length > 0 &&
+      typeof game?.applyAutoSelections === "function"
+    ) {
+      game.applyAutoSelections(storedAutoSelections, { emit: true });
+    }
+  }
 }
 
 function applyRoundInteractiveState(state) {
@@ -478,67 +595,63 @@ function applyRoundInteractiveState(state) {
     return;
   }
 
-  if (controlPanelMode === "auto") {
-    setControlPanelBetState(false);
-    setControlPanelRandomState(false);
-    setControlPanelRevealAllState(false);
-    setGameBoardInteractivity(false);
-    cashoutAvailable = false;
-    return;
-  }
-
-  const revealedCount = state?.revealed ?? 0;
-  const totalTiles = state?.totalTiles ?? GRID_SIZE * GRID_SIZE;
+  setControlPanelBetMode("cashout");
 
   if (selectionPending || state?.waitingForChoice) {
     setControlPanelBetState(false);
     setControlPanelRandomState(false);
-    setControlPanelRevealAllState(false);
-    cashoutAvailable = false;
+    cashoutAvailable = (state?.revealedSafe ?? 0) > 0;
     return;
   }
 
-  cashoutAvailable = false;
-  setControlPanelBetState(false);
+  const hasRevealedSafe = (state?.revealedSafe ?? 0) > 0;
+  cashoutAvailable = hasRevealedSafe;
+  setControlPanelBetState(hasRevealedSafe);
   setControlPanelRandomState(true);
-  const hasHiddenTiles = revealedCount < totalTiles;
-  setControlPanelRevealAllState(hasHiddenTiles);
 }
 
-function prepareForNewRoundState() {
+function prepareForNewRoundState({ preserveAutoSelections = false } = {}) {
   roundActive = true;
   cashoutAvailable = false;
   clearSelectionDelay();
-  setControlPanelBetMode("bet");
+  setControlPanelBetMode("cashout");
   setControlPanelBetState(false);
-  const isAutoMode = controlPanelMode === "auto";
-  setControlPanelRandomState(!isAutoMode);
-  setControlPanelRevealAllState(!isAutoMode);
-  setGameBoardInteractivity(!isAutoMode);
+  setControlPanelRandomState(true);
+  setGameBoardInteractivity(true);
   minesSelectionLocked = false;
 
-  if (!isAutoMode) {
+  if (controlPanelMode !== "auto") {
     manualRoundNeedsReset = false;
     setControlPanelMinesState(false);
     controlPanel?.setModeToggleClickable?.(false);
     controlPanel?.setBetControlsClickable?.(false);
-  } else {
-    controlPanel?.setModeToggleClickable?.(!autoRunActive);
-    controlPanel?.setBetControlsClickable?.(!autoRunActive);
-    if (!autoRunActive) {
-      setControlPanelMinesState(true);
-      setControlPanelAutoStartState(true);
+  } else if (!autoRunActive) {
+    setControlPanelMinesState(true);
+    controlPanel?.setModeToggleClickable?.(true);
+    controlPanel?.setBetControlsClickable?.(true);
+  }
+
+  if (preserveAutoSelections) {
+    autoSelectionCount = storedAutoSelections.length;
+    if (!autoRunActive && controlPanelMode === "auto") {
+      const canClick = autoSelectionCount > 0 && !selectionPending;
+      setControlPanelAutoStartState(canClick);
     }
+  } else {
+    autoSelectionCount = 0;
+    if (!autoRunActive) {
+      setControlPanelAutoStartState(false);
+    }
+    game?.clearAutoSelections?.();
   }
 }
 
-function finalizeRound() {
+function finalizeRound({ preserveAutoSelections = false } = {}) {
   roundActive = false;
   cashoutAvailable = false;
   clearSelectionDelay();
   setControlPanelBetMode("bet");
   setControlPanelRandomState(false);
-  setControlPanelRevealAllState(false);
   setGameBoardInteractivity(false);
   minesSelectionLocked = false;
   setControlPanelMinesState(true);
@@ -548,25 +661,24 @@ function finalizeRound() {
     setControlPanelMinesState(false);
     controlPanel?.setModeToggleClickable?.(false);
     controlPanel?.setBetControlsClickable?.(false);
-    setControlPanelAutoStartState(true);
   } else {
     setControlPanelBetState(true);
     setControlPanelMinesState(true);
     controlPanel?.setModeToggleClickable?.(true);
     controlPanel?.setBetControlsClickable?.(true);
-    if (controlPanelMode === "auto") {
-      setControlPanelAutoStartState(true);
-    } else {
-      setControlPanelAutoStartState(false);
-    }
   }
 
-  currentBetResult = null;
-  currentRoundAssignments.clear();
-
-  if (autoStopPending) {
-    autoStopPending = false;
-    setAutoRunUIState(false);
+  if (preserveAutoSelections) {
+    autoSelectionCount = storedAutoSelections.length;
+    if (!autoRunActive && controlPanelMode === "auto") {
+      const canClick = autoSelectionCount > 0 && !selectionPending;
+      setControlPanelAutoStartState(canClick);
+    }
+  } else {
+    autoSelectionCount = 0;
+    if (!autoRunActive) {
+      setControlPanelAutoStartState(false);
+    }
   }
 }
 
@@ -574,11 +686,7 @@ function handleBetButtonClick() {
   if (betButtonMode === "cashout") {
     handleCashout();
   } else {
-    let betResult = "lost";
-    if (demoMode || suppressRelay) {
-      betResult = determineDemoBetResult();
-    }
-    handleBet(betResult);
+    handleBet();
   }
 }
 
@@ -600,17 +708,8 @@ function handleCashout() {
 
   markManualRoundForReset();
   game?.revealRemainingTiles?.();
-  finalizeRound();
-}
-
-function handleRevealAllClick() {
-  if (!roundActive || selectionPending) {
-    return;
-  }
-
-  markManualRoundForReset();
-  game?.revealRemainingTiles?.();
-  finalizeRound();
+  showCashoutPopup();
+  finalizeRound({ preserveAutoSelections: controlPanelMode === "auto" });
 }
 
 function performBet() {
@@ -621,129 +720,17 @@ function performBet() {
   manualRoundNeedsReset = false;
 }
 
-function getCardKey(row, col) {
-  return `${row},${col}`;
-}
-
-function shuffleArray(values = []) {
-  const array = [...values];
-  for (let i = array.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-  return array;
-}
-
-function createCardPositions() {
-  const positions = [];
-  for (let row = 0; row < GRID_SIZE; row += 1) {
-    for (let col = 0; col < GRID_SIZE; col += 1) {
-      positions.push({ row, col });
-    }
-  }
-  return positions;
-}
-
-function generateScratchCardAssignments(betResult) {
-  const cardTypes =
-    Array.isArray(availableCardTypes) && availableCardTypes.length > 0
-      ? [...availableCardTypes]
-      : [null];
-  const positions = shuffleArray(createCardPositions());
-  const assignments = [];
-  const counts = new Map(cardTypes.map((key) => [key, 0]));
-  let winningKey = null;
-
-  if (betResult === "win") {
-    const shuffledTypes = shuffleArray(cardTypes);
-    const primaryType = shuffledTypes.length > 0 ? shuffledTypes[0] ?? null : null;
-    winningKey = primaryType ?? null;
-    const primarySlots = Math.min(3, positions.length);
-    for (let i = 0; i < primarySlots; i += 1) {
-      const position = positions.shift();
-      if (!position) break;
-      assignments.push({
-        row: position.row,
-        col: position.col,
-        contentKey: primaryType,
-      });
-      counts.set(primaryType, (counts.get(primaryType) ?? 0) + 1);
-    }
-
-    for (const position of positions) {
-      const available = cardTypes.filter((type) => {
-        if (type === primaryType) {
-          return (counts.get(type) ?? 0) < 3;
-        }
-        return (counts.get(type) ?? 0) < 2;
-      });
-      const pool = available.length > 0 ? available : cardTypes;
-      const choice = pool[Math.floor(Math.random() * pool.length)] ?? null;
-      counts.set(choice, (counts.get(choice) ?? 0) + 1);
-      assignments.push({
-        row: position.row,
-        col: position.col,
-        contentKey: choice,
-      });
-    }
-  } else {
-    for (const position of positions) {
-      const available = cardTypes.filter(
-        (type) => (counts.get(type) ?? 0) < 2
-      );
-      const pool = available.length > 0 ? available : cardTypes;
-      const choice = pool[Math.floor(Math.random() * pool.length)] ?? null;
-      counts.set(choice, (counts.get(choice) ?? 0) + 1);
-      assignments.push({
-        row: position.row,
-        col: position.col,
-        contentKey: choice,
-      });
-    }
-  }
-
-  return { assignments, winningKey };
-}
-
-function prepareScratchRound(betResult) {
-  currentBetResult = betResult;
-  if (!game) {
-    return;
-  }
-
-  const { assignments, winningKey } = generateScratchCardAssignments(betResult);
-  currentRoundAssignments.clear();
-  for (const entry of assignments) {
-    currentRoundAssignments.set(
-      getCardKey(entry.row, entry.col),
-      entry.contentKey ?? null
-    );
-  }
-  const totalWinningCards =
-    winningKey != null
-      ? assignments.filter((entry) => entry.contentKey === winningKey).length
-      : 0;
-  game?.setRoundAssignments?.(assignments, {
-    betResult,
-    winningKey,
-    totalWinningCards,
-  });
-}
-
-function handleBet(betResult = "lost") {
+function handleBet() {
   if (!demoMode && !suppressRelay) {
     disableServerRoundSetupControls();
     sendRelayMessage("action:bet", {
       bet: controlPanel?.getBetValue?.(),
       mines: controlPanel?.getMinesValue?.(),
-      result: betResult,
     });
     return;
   }
 
   performBet();
-  game?.reset?.();
-  prepareScratchRound(betResult);
 }
 
 function handleGameStateChange(state) {
@@ -753,15 +740,28 @@ function handleGameStateChange(state) {
   }
 
   if (state?.gameOver) {
-    finalizeRound();
-    if (autoRunActive && controlPanelMode === "auto") {
-      autoRoundInProgress = false;
-      scheduleNextAutoBetRound();
-    }
+    finalizeRound({ preserveAutoSelections: controlPanelMode === "auto" });
     return;
   }
 
   applyRoundInteractiveState(state);
+}
+
+function handleGameOver() {
+  markManualRoundForReset();
+  finalizeRound({ preserveAutoSelections: controlPanelMode === "auto" });
+  handleAutoRoundFinished();
+}
+
+function handleGameWin() {
+  game?.revealRemainingTiles?.();
+  game?.showWinPopup?.(
+    totalProfitMultiplierValue,
+    totalProfitAmountDisplayValue
+  );
+  markManualRoundForReset();
+  finalizeRound({ preserveAutoSelections: controlPanelMode === "auto" });
+  handleAutoRoundFinished();
 }
 
 function handleRandomPickClick() {
@@ -797,23 +797,90 @@ function handleCardSelected(selection) {
     return;
   }
 
-  selectionDelayHandle = null;
+  selectionDelayHandle = setTimeout(() => {
+    selectionDelayHandle = null;
 
-  if (!roundActive) {
+    if (!roundActive) {
+      selectionPending = false;
+      return;
+    }
+
+    const revealBomb = Math.random() < 0.15;
+
+    if (revealBomb) {
+      game?.SetSelectedCardIsBomb?.();
+    } else {
+      game?.setSelectedCardIsDiamond?.();
+    }
+
     selectionPending = false;
+  }, SERVER_RESPONSE_DELAY_MS);
+}
+
+function handleAutoSelectionChange(count) {
+  autoSelectionCount = count;
+
+  if (controlPanelMode === "auto") {
+    const selections = game?.getAutoSelections?.() ?? [];
+    if (Array.isArray(selections)) {
+      if (count > 0) {
+        storedAutoSelections = selections.map((selection) => ({
+          ...selection,
+        }));
+      } else if (!autoRunActive && !autoRoundInProgress) {
+        storedAutoSelections = selections.map((selection) => ({
+          ...selection,
+        }));
+      }
+    }
+  }
+
+  if (controlPanelMode !== "auto") {
+    setControlPanelAutoStartState(false);
     return;
   }
 
-  const key = getCardKey(selection?.row, selection?.col);
-  const contentKey = currentRoundAssignments.get(key) ?? null;
+  if (!roundActive) {
+    if (!autoRunActive) {
+      setControlPanelAutoStartState(false);
+    }
+    return;
+  }
 
-  selectionPending = false;
-  game?.revealSelectedCard?.(contentKey);
+  if (count > 0 && !minesSelectionLocked) {
+    minesSelectionLocked = true;
+    setControlPanelMinesState(false);
+  } else if (count === 0 && !autoRunActive) {
+    minesSelectionLocked = false;
+    setControlPanelMinesState(true);
+  }
+
+  if (autoRunActive) {
+    setControlPanelAutoStartState(!autoStopFinishing);
+    return;
+  }
+
+  const canClick = count > 0 && !selectionPending;
+  setControlPanelAutoStartState(canClick);
+
+  if (!demoMode && !suppressRelay && controlPanelMode === "auto") {
+    const selectionsToSend = storedAutoSelections.map((selection) => ({
+      ...selection,
+    }));
+    sendRelayMessage("game:auto-selections", {
+      selections: selectionsToSend,
+    });
+  }
 }
 
 function handleStartAutobetClick() {
   if (autoRunActive) {
-    stopAutoBetProcess();
+    if (!autoStopFinishing) {
+      autoRunFlag = false;
+      autoStopFinishing = true;
+      setAutoRunUIState(true);
+      sendRelayMessage("action:stop-autobet", { reason: "user" });
+    }
     return;
   }
 
@@ -821,49 +888,97 @@ function handleStartAutobetClick() {
     return;
   }
 
-  startAutoBetProcess();
+  beginAutoBetProcess();
 }
 
+function showCashoutPopup() {
+  game?.showWinPopup?.(
+    totalProfitMultiplierValue,
+    totalProfitAmountDisplayValue
+  );
+}
 const opts = {
+  // Window visuals
   size: 600,
   backgroundColor: "#091B26",
   fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Arial",
-  grid: GRID_SIZE,
-  mines: 1,
+
+  // Game setup
+  grid: 5,
+  mines: 5,
   autoResetDelayMs: AUTO_RESET_DELAY_MS,
+
+  // Visuals
+  diamondTexturePath: diamondTextureUrl,
+  bombTexturePath: bombTextureUrl,
   iconSizePercentage: 0.7,
   iconRevealedSizeOpacity: 0.2,
   iconRevealedSizeFactor: 0.7,
   cardsSpawnDuration: 350,
   revealAllIntervalDelay: 40,
   strokeWidth: 1,
-  gapBetweenTiles: 0.013,
+  gapBetweenTiles: 0.1,
+
+  // Animations feel
   hoverEnabled: true,
   hoverEnterDuration: 120,
   hoverExitDuration: 200,
   hoverTiltAxis: "x",
   hoverSkewAmount: 0.02,
   disableAnimations: false,
+
+  // Card Selected Wiggle
   wiggleSelectionEnabled: true,
   wiggleSelectionDuration: 900,
   wiggleSelectionTimes: 15,
   wiggleSelectionIntensity: 0.03,
   wiggleSelectionScale: 0.005,
+
+  // Card Reveal Flip
   flipDelayMin: 150,
   flipDelayMax: 500,
   flipDuration: 300,
   flipEaseFunction: "easeInOutSine",
+
+  // Bomb Explosion shake
+  explosionShakeEnabled: true,
+  explosionShakeDuration: 1000,
+  explosionShakeAmplitude: 12,
+  explosionShakerotationAmplitude: 0.012,
+  explosionShakeBaseFrequency: 8,
+  explosionShakeSecondaryFrequency: 13,
+
+  // Bomb Explosion spritesheet
+  explosionSheetEnabled: true,
+  explosionSheetPath: explosionSheetUrl,
+  explosionSheetCols: 7,
+  explosionSheetRows: 3,
+  explosionSheetFps: 24,
+  explosionSheetScaleFit: 1.0,
+  explosionSheetOpacity: 0.2,
+
+  // Sounds
   tileTapDownSoundPath: tileTapDownSoundUrl,
   tileFlipSoundPath: tileFlipSoundUrl,
   tileHoverSoundPath: tileHoverSoundUrl,
+  diamondRevealedSoundPath: diamondRevealedSoundUrl,
+  bombRevealedSoundPath: bombRevealedSoundUrl,
+  winSoundPath: winSoundUrl,
   gameStartSoundPath: gameStartSoundUrl,
-  roundWinSoundPath: roundWinSoundUrl,
-  roundLostSoundPath: roundLostSoundUrl,
+  diamondRevealPitchMin: 1.0,
+  diamondRevealPitchMax: 1.25,
+
+  // Win pop-up
   winPopupShowDuration: 260,
   winPopupWidth: 260,
   winPopupHeight: 200,
+
+  // Event callback for when a card is selected
   getMode: () => controlPanelMode,
+  onAutoSelectionChange: (count) => handleAutoSelectionChange(count),
   onCardSelected: (selection) => handleCardSelected(selection),
+  onWin: handleGameWin,
+  onGameOver: handleGameOver,
   onChange: handleGameStateChange,
 };
 
@@ -876,7 +991,7 @@ const opts = {
   // Initialize Control Panel
   try {
     controlPanel = new ControlPanel("#control-panel", {
-      gameName: "Scratch Cards",
+      gameName: "Mines",
       totalTiles,
       maxMines,
       initialMines,
@@ -885,40 +1000,35 @@ const opts = {
     controlPanel.addEventListener("modechange", (event) => {
       const nextMode = event.detail?.mode === "auto" ? "auto" : "manual";
       const previousMode = controlPanelMode;
-
-      if (nextMode === previousMode) {
-        return;
-      }
-
-      if (autoRunActive && nextMode !== "auto") {
-        stopAutoBetProcess();
+      const currentSelections = game?.getAutoSelections?.() ?? [];
+      if (controlPanelMode === "auto" && Array.isArray(currentSelections)) {
+        storedAutoSelections = currentSelections.map((selection) => ({
+          ...selection,
+        }));
       }
 
       controlPanelMode = nextMode;
 
-      if (nextMode === "auto") {
-        if (previousMode === "manual") {
-          if (roundActive) {
-            finalizeRound();
-          }
-          if (manualRoundNeedsReset) {
-            game?.reset?.();
-            manualRoundNeedsReset = false;
-          }
+      if (nextMode !== "auto") {
+        if (autoRunActive) {
+          stopAutoBetProcess();
         }
-        setControlPanelRandomState(false);
-        setControlPanelRevealAllState(false);
-        setGameBoardInteractivity(false);
-        if (!autoRunActive) {
-          setControlPanelAutoStartState(true);
-        }
-      } else {
+        autoSelectionCount = 0;
         setControlPanelAutoStartState(false);
-        setGameBoardInteractivity(true);
-        if (!roundActive) {
-          setControlPanelRandomState(true);
-          setControlPanelRevealAllState(true);
+        game?.clearAutoSelections?.();
+        finalizeRound();
+      } else {
+        if (previousMode === "manual" && manualRoundNeedsReset) {
+          game?.reset?.({ preserveAutoSelections: true });
+          manualRoundNeedsReset = false;
         }
+        if (!roundActive && !autoRunActive) {
+          prepareForNewRoundState({ preserveAutoSelections: true });
+        }
+        if (storedAutoSelections.length > 0) {
+          game?.applyAutoSelections?.(storedAutoSelections, { emit: true });
+        }
+        handleAutoSelectionChange(storedAutoSelections.length);
       }
     });
     controlPanel.addEventListener("betvaluechange", (event) => {
@@ -976,13 +1086,13 @@ const opts = {
     });
     controlPanel.addEventListener("bet", handleBetButtonClick);
     controlPanel.addEventListener("randompick", handleRandomPickClick);
-    controlPanel.addEventListener("revealall", handleRevealAllClick);
     controlPanel.addEventListener("startautobet", handleStartAutobetClick);
     finalizeRound();
     controlPanel.setBetAmountDisplay("$0.00");
     setTotalProfitMultiplierValue(0.0);
     controlPanel.setProfitOnWinDisplay("$0.00");
     setTotalProfitAmountValue("0.00000000");
+    handleAutoSelectionChange(autoSelectionCount);
     opts.disableAnimations = !(controlPanel.getAnimationsEnabled?.() ?? true);
     controlPanel.setDummyServerPanelVisibility(
       serverDummyUI?.isVisible?.() ?? false
@@ -995,17 +1105,13 @@ const opts = {
   try {
     game = await createGame("#game", opts);
     window.game = game;
-    availableCardTypes = game?.getCardContentKeys?.() ?? [];
     autoResetDelayMs = Number(
       game?.getAutoResetDelay?.() ?? AUTO_RESET_DELAY_MS
     );
     const state = game?.getState?.();
     if (state) {
-      const totalTiles = state.totalTiles ?? state.grid * state.grid;
-      if (totalTiles != null) {
-        controlPanel?.setTotalTiles?.(totalTiles, { emit: false });
-      }
-      controlPanel?.setMinesValue?.(opts.mines, { emit: false });
+      controlPanel?.setTotalTiles?.(state.grid * state.grid, { emit: false });
+      controlPanel?.setMinesValue?.(state.mines, { emit: false });
     }
     const animationsEnabled = controlPanel?.getAnimationsEnabled?.();
     if (animationsEnabled != null) {
