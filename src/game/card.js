@@ -50,6 +50,7 @@ export class Card {
     this._swapHandled = false;
     this._winHighlighted = false;
     this._winHighlightInterval = null;
+    this._spawnTweenCancel = null;
 
     this._tiltDir = 1;
     this._baseX = 0;
@@ -61,6 +62,7 @@ export class Card {
   setDisableAnimations(disabled) {
     this.disableAnimations = disabled;
     if (disabled) {
+      this.#cancelSpawnAnimation();
       this.forceFlatPose();
       this.refreshTint();
       if (this._wrap?.scale?.set) {
@@ -312,6 +314,8 @@ export class Card {
       return false;
     }
 
+    this.#cancelSpawnAnimation();
+
     this._animating = true;
     if (this.container) {
       this.container.eventMode = "none";
@@ -330,7 +334,7 @@ export class Card {
     const tileSize = this._tileSize;
     const radius = this._tileRadius;
     const pad = this._tilePad;
-    const startScaleY = wrap.scale.y;
+    const startScaleY = Math.max(1, wrap.scale.y);
     const startSkew = this.getSkew();
     const startTilt = this._tiltDir >= 0 ? +1 : -1;
 
@@ -479,7 +483,7 @@ export class Card {
     if (this.disableAnimations || duration <= 0) {
       update?.(ease(1));
       complete?.();
-      return;
+      return () => {};
     }
 
     const start = performance.now();
@@ -493,6 +497,10 @@ export class Card {
       }
     };
     this.app.ticker.add(loop);
+
+    return () => {
+      this.app.ticker.remove(loop);
+    };
   }
 
   setLayout({ x, y, scale }) {
@@ -527,6 +535,7 @@ export class Card {
     this.stopHover();
     this.stopWiggle();
     this._bumpToken = null;
+    this.#cancelSpawnAnimation();
     this.#stopWinHighlightLoop();
     this.container?.destroy?.({ children: true });
     this._wrap = null;
@@ -539,6 +548,23 @@ export class Card {
     if (this._winHighlightInterval != null) {
       clearInterval(this._winHighlightInterval);
       this._winHighlightInterval = null;
+    }
+  }
+
+  #cancelSpawnAnimation() {
+    if (typeof this._spawnTweenCancel !== "function") {
+      return;
+    }
+
+    const wrap = this._wrap;
+    this._spawnTweenCancel();
+    this._spawnTweenCancel = null;
+
+    if (wrap?.scale?.set) {
+      wrap.scale.set(1, 1);
+    } else if (wrap?.scale) {
+      wrap.scale.x = 1;
+      wrap.scale.y = 1;
     }
   }
 
@@ -633,7 +659,8 @@ export class Card {
     if (this.disableAnimations) {
       flipWrap.scale?.set?.(1, 1);
     } else {
-      this.tween({
+      this._spawnTweenCancel?.();
+      this._spawnTweenCancel = this.tween({
         duration: this.animationOptions.cardsSpawnDuration,
         ease: (x) => Ease.easeOutBack(x),
         update: (p) => {
@@ -642,6 +669,7 @@ export class Card {
         },
         complete: () => {
           flipWrap.scale?.set?.(1, 1);
+          this._spawnTweenCancel = null;
         },
       });
     }
