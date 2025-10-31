@@ -48,6 +48,9 @@ export class Card {
     this._layoutScale = 1;
     this._shakeActive = false;
     this._shakeBaseRotation = 0;
+    this._shakeWrapBaseRotation = 0;
+    this._shakeWrapBaseX = 0;
+    this._shakeWrapBaseY = 0;
     this._shakeTicker = null;
     this._swapHandled = false;
     this._winHighlighted = false;
@@ -225,6 +228,13 @@ export class Card {
     const baseY = this._baseY;
     const baseRotation = container.rotation ?? 0;
     this._shakeBaseRotation = baseRotation;
+    const wrap = this._wrap;
+    const wrapBaseRotation = wrap?.rotation ?? 0;
+    const wrapBaseX = wrap?.position?.x ?? 0;
+    const wrapBaseY = wrap?.position?.y ?? 0;
+    this._shakeWrapBaseRotation = wrapBaseRotation;
+    this._shakeWrapBaseX = wrapBaseX;
+    this._shakeWrapBaseY = wrapBaseY;
     let elapsed = 0;
 
     const update = (delta) => {
@@ -236,9 +246,18 @@ export class Card {
       const angle = Math.sin(t) * rotationAmplitude;
       const offsetX = Math.sin(t * 1.7) * positionAmplitude * this._layoutScale;
       const offsetY = Math.cos(t * 1.3) * positionAmplitude * this._layoutScale;
-      container.rotation = baseRotation + angle;
-      container.x = baseX + offsetX;
-      container.y = baseY + offsetY;
+      if (wrap && !wrap.destroyed) {
+        wrap.rotation = wrapBaseRotation + angle;
+        wrap.position.x = wrapBaseX + offsetX;
+        wrap.position.y = wrapBaseY + offsetY;
+        container.rotation = baseRotation;
+        container.x = baseX;
+        container.y = baseY;
+      } else {
+        container.rotation = baseRotation + angle;
+        container.x = baseX + offsetX;
+        container.y = baseY + offsetY;
+      }
     };
 
     this._shakeTicker = update;
@@ -257,7 +276,17 @@ export class Card {
       this.container.y = this._baseY;
       this.container.rotation = this._shakeBaseRotation ?? 0;
     }
+    if (this._wrap && !this._wrap.destroyed) {
+      this._wrap.rotation = this._shakeWrapBaseRotation ?? 0;
+      if (this._wrap.position) {
+        this._wrap.position.x = this._shakeWrapBaseX ?? this._wrap.position.x;
+        this._wrap.position.y = this._shakeWrapBaseY ?? this._wrap.position.y;
+      }
+    }
     this._shakeBaseRotation = 0;
+    this._shakeWrapBaseRotation = 0;
+    this._shakeWrapBaseX = 0;
+    this._shakeWrapBaseY = 0;
   }
 
   bump({ scaleMultiplier = 1.08, duration = 260 } = {}) {
