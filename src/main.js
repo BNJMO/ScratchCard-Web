@@ -914,10 +914,19 @@ const opts = {
         }
       } else {
         setControlPanelAutoStartState(false);
-        setGameBoardInteractivity(true);
-        if (!roundActive) {
-          setControlPanelRandomState(true);
-          setControlPanelRevealAllState(true);
+        if (previousMode === "auto") {
+          game?.reset?.();
+          manualRoundNeedsReset = false;
+          setGameBoardInteractivity(false);
+          setControlPanelRandomState(false);
+          setControlPanelRevealAllState(false);
+          setControlPanelBetState(true);
+        } else {
+          setGameBoardInteractivity(true);
+          if (!roundActive) {
+            setControlPanelRandomState(true);
+            setControlPanelRevealAllState(true);
+          }
         }
       }
     });
