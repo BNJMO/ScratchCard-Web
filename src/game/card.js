@@ -49,6 +49,9 @@ export class Card {
     this._shakeActive = false;
     this._shakeTicker = null;
     this._shakePhase = 0;
+    this._shakeWrapX = 0;
+    this._shakeWrapY = 0;
+    this._shakeWrapRotation = 0;
     this._swapHandled = false;
     this._winHighlighted = false;
     this._winHighlightInterval = null;
@@ -302,6 +305,7 @@ export class Card {
     if (
       this._shakeActive ||
       !this.container ||
+      !this._wrap ||
       !this.app ||
       this.destroyed ||
       this.disableAnimations
@@ -311,39 +315,42 @@ export class Card {
 
     const hasCustomAmplitude = typeof amplitude === "number";
 
+    const wrap = this._wrap;
+    this._shakeWrapX = wrap.x ?? this._shakeWrapX ?? 0;
+    this._shakeWrapY = wrap.y ?? this._shakeWrapY ?? 0;
+    this._shakeWrapRotation = wrap.rotation ?? this._shakeWrapRotation ?? 0;
+
     this._shakeActive = true;
     this._shakePhase = Math.random() * Math.PI * 2;
 
     const ticker = (delta) => {
       if (!this._shakeActive || this.destroyed) {
-        this.app.ticker.remove(ticker);
-        this._shakeTicker = null;
+        this.stopShakeLoop();
         return;
       }
 
-      const container = this.container;
-      if (!container) {
+      const target = this._wrap;
+      if (!this.container || !target) {
         this.stopShakeLoop();
         return;
       }
 
       this._shakePhase += delta * speed;
       const phase = this._shakePhase;
-      const layoutScale = this._layoutScale ?? 1;
       const tileSize = this._tileSize ?? 0;
       const baseAmplitude = hasCustomAmplitude
         ? amplitude
         : Math.max(0.6, tileSize * 0.012);
-      const resolvedAmplitude = baseAmplitude * layoutScale;
-      const baseX = this._baseX;
-      const baseY = this._baseY;
+      const resolvedAmplitude = baseAmplitude;
+      const baseX = this._shakeWrapX ?? target.x ?? 0;
+      const baseY = this._shakeWrapY ?? target.y ?? 0;
+      const baseRotation = this._shakeWrapRotation ?? target.rotation ?? 0;
       const offsetX = Math.sin(phase) * resolvedAmplitude;
       const offsetY = Math.cos(phase * 1.35) * resolvedAmplitude * 0.6;
       const rotation = Math.sin(phase * 1.2) * rotationAmplitude;
 
-      container.x = baseX + offsetX;
-      container.y = baseY + offsetY;
-      container.rotation = rotation;
+      target.position.set(baseX + offsetX, baseY + offsetY);
+      target.rotation = baseRotation + rotation;
     };
 
     this._shakeTicker = ticker;
@@ -351,10 +358,6 @@ export class Card {
   }
 
   stopShakeLoop() {
-    if (!this._shakeActive) {
-      return;
-    }
-
     this._shakeActive = false;
     if (this._shakeTicker) {
       this.app?.ticker?.remove?.(this._shakeTicker);
@@ -365,6 +368,18 @@ export class Card {
       this.container.x = this._baseX;
       this.container.y = this._baseY;
       this.container.rotation = 0;
+    }
+
+    if (this._wrap) {
+      const wrapBaseX = this._shakeWrapX ?? this._wrap.x ?? 0;
+      const wrapBaseY = this._shakeWrapY ?? this._wrap.y ?? 0;
+      const wrapBaseRotation =
+        this._shakeWrapRotation ?? this._wrap.rotation ?? 0;
+      this._wrap.position.set(wrapBaseX, wrapBaseY);
+      this._wrap.rotation = wrapBaseRotation;
+      this._shakeWrapX = wrapBaseX;
+      this._shakeWrapY = wrapBaseY;
+      this._shakeWrapRotation = wrapBaseRotation;
     }
   }
 
@@ -713,6 +728,9 @@ export class Card {
     flipWrap.addChild(elevationShadow, elevationLip, card, inset, icon);
     flipWrap.position.set(tileSize / 2, tileSize / 2);
     flipWrap.pivot.set(tileSize / 2, tileSize / 2);
+    this._shakeWrapX = flipWrap.x;
+    this._shakeWrapY = flipWrap.y;
+    this._shakeWrapRotation = flipWrap.rotation ?? 0;
 
     const tile = new Container();
     tile.addChild(flipWrap);
