@@ -323,6 +323,31 @@ export async function createGame(mount, opts = {}) {
     winningCards: new Set(),
     pendingReveals: 0,
   };
+  const manualMatchTracker = new Map();
+  const manualShakingCards = new Set();
+
+  function stopAllMatchShakes({ preserve } = {}) {
+    const preserveSet = preserve ? new Set(preserve) : null;
+    const nextTracked = new Set();
+    for (const card of manualShakingCards) {
+      if (preserveSet?.has(card)) {
+        nextTracked.add(card);
+        continue;
+      }
+      card?.stopMatchShake?.();
+    }
+    manualShakingCards.clear();
+    if (preserveSet) {
+      for (const card of nextTracked) {
+        manualShakingCards.add(card);
+      }
+    }
+  }
+
+  function resetManualMatchTracking() {
+    manualMatchTracker.clear();
+    stopAllMatchShakes();
+  }
 
   function resetRoundOutcome() {
     currentRoundOutcome.betResult = null;
@@ -335,6 +360,7 @@ export async function createGame(mount, opts = {}) {
     currentRoundOutcome.soundKey = null;
     currentRoundOutcome.winningCards.clear();
     currentRoundOutcome.pendingReveals = 0;
+    resetManualMatchTracking();
   }
 
   function applyRoundOutcomeMeta(meta = {}, assignments = []) {
@@ -371,6 +397,7 @@ export async function createGame(mount, opts = {}) {
       card.setDisableAnimations(disableAnimations);
       card._assignedContent = currentAssignments.get(key) ?? null;
       card._pendingWinningReveal = false;
+      card.stopMatchShake?.();
     }
   }
 
@@ -477,6 +504,27 @@ export async function createGame(mount, opts = {}) {
 
     const state = rules.getState();
 
+    const autoModeActive = isAutoModeActive(getMode);
+    if (autoModeActive) {
+      stopAllMatchShakes();
+      manualMatchTracker.clear();
+    } else if (payloadKey != null) {
+      let tracked = manualMatchTracker.get(payloadKey);
+      if (!tracked) {
+        tracked = new Set();
+        manualMatchTracker.set(payloadKey, tracked);
+      }
+      tracked.add(card);
+      if (tracked.size >= 2 && state.revealed < state.totalTiles) {
+        for (const trackedCard of tracked) {
+          if (!manualShakingCards.has(trackedCard)) {
+            trackedCard.startMatchShake?.();
+            manualShakingCards.add(trackedCard);
+          }
+        }
+      }
+    }
+
     if (
       currentRoundOutcome.betResult === "win" &&
       !currentRoundOutcome.autoRevealTriggered &&
@@ -492,6 +540,24 @@ export async function createGame(mount, opts = {}) {
 
     const allCardsRevealed = state.revealed >= state.totalTiles;
     const animationsCompleted = currentRoundOutcome.pendingReveals <= 0;
+
+    if (allCardsRevealed) {
+      const shouldPreserveWinShake =
+        currentRoundOutcome.betResult === "win" &&
+        currentRoundOutcome.winningCards.size > 0;
+      if (shouldPreserveWinShake) {
+        stopAllMatchShakes({ preserve: currentRoundOutcome.winningCards });
+        for (const winningCard of currentRoundOutcome.winningCards) {
+          if (!manualShakingCards.has(winningCard)) {
+            winningCard.startMatchShake?.();
+            manualShakingCards.add(winningCard);
+          }
+        }
+      } else {
+        stopAllMatchShakes();
+      }
+      manualMatchTracker.clear();
+    }
 
     if (
       !currentRoundOutcome.feedbackPlayed &&

@@ -47,6 +47,8 @@ export class Card {
     this._bumpToken = null;
     this._layoutScale = 1;
     this._shakeActive = false;
+    this._shakeTicker = null;
+    this._shakeIconBase = null;
     this._swapHandled = false;
     this._winHighlighted = false;
     this._winHighlightInterval = null;
@@ -207,7 +209,7 @@ export class Card {
     this._animating = false;
   }
 
-  bump({ scaleMultiplier = 1.08, duration = 260 } = {}) {
+  bump({ scaleMultiplier = 1.08, duration = 350 } = {}) {
     const wrap = this._wrap;
     if (!wrap) return;
 
@@ -277,11 +279,12 @@ export class Card {
         return;
       }
       this.bump({ scaleMultiplier, duration });
-    }, 2000);
+    }, 1000);
   }
 
   forceFlatPose() {
     if (!this._wrap?.scale || !this.container) return;
+    this.stopMatchShake();
     this._wrap.scale.x = this._wrap.scale.y = 1;
     this.setSkew(0);
     this.container.x = this._baseX;
@@ -511,6 +514,9 @@ export class Card {
       this.container.scale?.set?.(scale, scale);
       this._layoutScale = scale;
     }
+    if (!this._shakeActive) {
+      this.container.rotation = 0;
+    }
   }
 
   setSkew(v) {
@@ -534,6 +540,7 @@ export class Card {
     this.destroyed = true;
     this.stopHover();
     this.stopWiggle();
+    this.stopMatchShake();
     this._bumpToken = null;
     this.#cancelSpawnAnimation();
     this.#stopWinHighlightLoop();
@@ -565,6 +572,85 @@ export class Card {
     } else if (wrap?.scale) {
       wrap.scale.x = 1;
       wrap.scale.y = 1;
+    }
+  }
+
+  startMatchShake({
+    amplitude = 1.0,
+    verticalFactor = 1.0,
+    rotationAmplitude = 0.011,
+    frequency = 2,
+  } = {}) {
+    if (this.destroyed || this._shakeActive || !this.container) {
+      return;
+    }
+    if (this.disableAnimations) {
+      return;
+    }
+
+    const icon = this._icon;
+    if (!icon) {
+      return;
+    }
+
+    this._shakeActive = true;
+    const baseX = icon.x;
+    const baseY = icon.y;
+    const baseRotation = icon.rotation ?? 0;
+    const scaledAmplitude = amplitude;
+    const scaledVertical = scaledAmplitude * verticalFactor;
+    const startTime = performance.now();
+
+    this._shakeIconBase = { x: baseX, y: baseY, rotation: baseRotation };
+
+    const tick = () => {
+      if (
+        !this._shakeActive ||
+        this.destroyed ||
+        !this.container ||
+        !icon ||
+        icon.destroyed
+      ) {
+        this.stopMatchShake();
+        return;
+      }
+
+      const elapsed = (performance.now() - startTime) / 1000;
+      const angle = elapsed * frequency * Math.PI * 2;
+      icon.x = baseX + Math.sin(angle) * scaledAmplitude;
+      icon.y = baseY + Math.cos(angle) * scaledVertical;
+      icon.rotation = baseRotation + Math.sin(angle * 0.9) * rotationAmplitude;
+    };
+
+    this._shakeTicker = tick;
+    this.app.ticker.add(tick);
+  }
+
+  stopMatchShake() {
+    if (!this._shakeActive) {
+      return;
+    }
+
+    this._shakeActive = false;
+    if (this._shakeTicker) {
+      this.app.ticker.remove(this._shakeTicker);
+      this._shakeTicker = null;
+    }
+    if (this._icon) {
+      const base = this._shakeIconBase ?? {
+        x: this._icon.x,
+        y: this._icon.y,
+        rotation: this._icon.rotation ?? 0,
+      };
+      this._icon.x = base.x;
+      this._icon.y = base.y;
+      this._icon.rotation = base.rotation;
+    }
+    this._shakeIconBase = null;
+    if (this.container) {
+      this.container.x = this._baseX;
+      this.container.y = this._baseY;
+      this.container.rotation = 0;
     }
   }
 
