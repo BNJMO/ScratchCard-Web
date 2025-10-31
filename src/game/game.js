@@ -323,6 +323,20 @@ export async function createGame(mount, opts = {}) {
     winningCards: new Set(),
     pendingReveals: 0,
   };
+  const manualMatchTracker = new Map();
+  const manualShakingCards = new Set();
+
+  function stopAllMatchShakes() {
+    for (const card of manualShakingCards) {
+      card?.stopMatchShake?.();
+    }
+    manualShakingCards.clear();
+  }
+
+  function resetManualMatchTracking() {
+    manualMatchTracker.clear();
+    stopAllMatchShakes();
+  }
 
   function resetRoundOutcome() {
     currentRoundOutcome.betResult = null;
@@ -335,6 +349,7 @@ export async function createGame(mount, opts = {}) {
     currentRoundOutcome.soundKey = null;
     currentRoundOutcome.winningCards.clear();
     currentRoundOutcome.pendingReveals = 0;
+    resetManualMatchTracking();
   }
 
   function applyRoundOutcomeMeta(meta = {}, assignments = []) {
@@ -371,6 +386,7 @@ export async function createGame(mount, opts = {}) {
       card.setDisableAnimations(disableAnimations);
       card._assignedContent = currentAssignments.get(key) ?? null;
       card._pendingWinningReveal = false;
+      card.stopMatchShake?.();
     }
   }
 
@@ -477,6 +493,27 @@ export async function createGame(mount, opts = {}) {
 
     const state = rules.getState();
 
+    const autoModeActive = isAutoModeActive(getMode);
+    if (autoModeActive) {
+      stopAllMatchShakes();
+      manualMatchTracker.clear();
+    } else if (payloadKey != null) {
+      let tracked = manualMatchTracker.get(payloadKey);
+      if (!tracked) {
+        tracked = new Set();
+        manualMatchTracker.set(payloadKey, tracked);
+      }
+      tracked.add(card);
+      if (tracked.size === 2 && state.revealed < state.totalTiles) {
+        for (const trackedCard of tracked) {
+          if (!manualShakingCards.has(trackedCard)) {
+            trackedCard.startMatchShake?.();
+            manualShakingCards.add(trackedCard);
+          }
+        }
+      }
+    }
+
     if (
       currentRoundOutcome.betResult === "win" &&
       !currentRoundOutcome.autoRevealTriggered &&
@@ -492,6 +529,11 @@ export async function createGame(mount, opts = {}) {
 
     const allCardsRevealed = state.revealed >= state.totalTiles;
     const animationsCompleted = currentRoundOutcome.pendingReveals <= 0;
+
+    if (allCardsRevealed) {
+      stopAllMatchShakes();
+      manualMatchTracker.clear();
+    }
 
     if (
       !currentRoundOutcome.feedbackPlayed &&

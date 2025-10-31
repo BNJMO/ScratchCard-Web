@@ -47,6 +47,7 @@ export class Card {
     this._bumpToken = null;
     this._layoutScale = 1;
     this._shakeActive = false;
+    this._shakeTicker = null;
     this._swapHandled = false;
     this._winHighlighted = false;
     this._winHighlightInterval = null;
@@ -282,6 +283,7 @@ export class Card {
 
   forceFlatPose() {
     if (!this._wrap?.scale || !this.container) return;
+    this.stopMatchShake();
     this._wrap.scale.x = this._wrap.scale.y = 1;
     this.setSkew(0);
     this.container.x = this._baseX;
@@ -511,6 +513,9 @@ export class Card {
       this.container.scale?.set?.(scale, scale);
       this._layoutScale = scale;
     }
+    if (!this._shakeActive) {
+      this.container.rotation = 0;
+    }
   }
 
   setSkew(v) {
@@ -534,6 +539,7 @@ export class Card {
     this.destroyed = true;
     this.stopHover();
     this.stopWiggle();
+    this.stopMatchShake();
     this._bumpToken = null;
     this.#cancelSpawnAnimation();
     this.#stopWinHighlightLoop();
@@ -565,6 +571,60 @@ export class Card {
     } else if (wrap?.scale) {
       wrap.scale.x = 1;
       wrap.scale.y = 1;
+    }
+  }
+
+  startMatchShake({
+    amplitude = 3,
+    verticalFactor = 0.5,
+    rotationAmplitude = 0.012,
+    frequency = 6,
+  } = {}) {
+    if (this.destroyed || this._shakeActive || !this.container) {
+      return;
+    }
+    if (this.disableAnimations) {
+      return;
+    }
+
+    this._shakeActive = true;
+    const baseX = this._baseX;
+    const baseY = this._baseY;
+    const scaledAmplitude = amplitude * this._layoutScale;
+    const scaledVertical = scaledAmplitude * verticalFactor;
+    const startTime = performance.now();
+
+    const tick = () => {
+      if (!this._shakeActive || this.destroyed || !this.container) {
+        this.stopMatchShake();
+        return;
+      }
+
+      const elapsed = (performance.now() - startTime) / 1000;
+      const angle = elapsed * frequency * Math.PI * 2;
+      this.container.x = baseX + Math.sin(angle) * scaledAmplitude;
+      this.container.y = baseY + Math.cos(angle) * scaledVertical;
+      this.container.rotation = Math.sin(angle * 0.9) * rotationAmplitude;
+    };
+
+    this._shakeTicker = tick;
+    this.app.ticker.add(tick);
+  }
+
+  stopMatchShake() {
+    if (!this._shakeActive) {
+      return;
+    }
+
+    this._shakeActive = false;
+    if (this._shakeTicker) {
+      this.app.ticker.remove(this._shakeTicker);
+      this._shakeTicker = null;
+    }
+    if (this.container) {
+      this.container.x = this._baseX;
+      this.container.y = this._baseY;
+      this.container.rotation = 0;
     }
   }
 
