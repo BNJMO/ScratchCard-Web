@@ -919,6 +919,10 @@ const opts = {
           setControlPanelRandomState(true);
           setControlPanelRevealAllState(true);
         }
+        if (previousMode === "auto") {
+          game?.reset?.();
+          manualRoundNeedsReset = false;
+        }
       }
     });
     controlPanel.addEventListener("betvaluechange", (event) => {
