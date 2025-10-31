@@ -47,6 +47,8 @@ export class Card {
     this._bumpToken = null;
     this._layoutScale = 1;
     this._shakeActive = false;
+    this._shakeTicker = null;
+    this._shakePhase = 0;
     this._swapHandled = false;
     this._winHighlighted = false;
     this._winHighlightInterval = null;
@@ -287,9 +289,83 @@ export class Card {
     this.container.x = this._baseX;
     this.container.y = this._baseY;
     this.container.rotation = 0;
-    this._shakeActive = false;
+    this.stopShakeLoop();
     this._bumpToken = null;
     this.#stopWinHighlightLoop();
+  }
+
+  startShakeLoop({
+    amplitude,
+    rotationAmplitude = 0.015,
+    speed = 0.16,
+  } = {}) {
+    if (
+      this._shakeActive ||
+      !this.container ||
+      !this.app ||
+      this.destroyed ||
+      this.disableAnimations
+    ) {
+      return;
+    }
+
+    const hasCustomAmplitude = typeof amplitude === "number";
+
+    this._shakeActive = true;
+    this._shakePhase = Math.random() * Math.PI * 2;
+
+    const ticker = (delta) => {
+      if (!this._shakeActive || this.destroyed) {
+        this.app.ticker.remove(ticker);
+        this._shakeTicker = null;
+        return;
+      }
+
+      const container = this.container;
+      if (!container) {
+        this.stopShakeLoop();
+        return;
+      }
+
+      this._shakePhase += delta * speed;
+      const phase = this._shakePhase;
+      const layoutScale = this._layoutScale ?? 1;
+      const tileSize = this._tileSize ?? 0;
+      const baseAmplitude = hasCustomAmplitude
+        ? amplitude
+        : Math.max(0.6, tileSize * 0.012);
+      const resolvedAmplitude = baseAmplitude * layoutScale;
+      const baseX = this._baseX;
+      const baseY = this._baseY;
+      const offsetX = Math.sin(phase) * resolvedAmplitude;
+      const offsetY = Math.cos(phase * 1.35) * resolvedAmplitude * 0.6;
+      const rotation = Math.sin(phase * 1.2) * rotationAmplitude;
+
+      container.x = baseX + offsetX;
+      container.y = baseY + offsetY;
+      container.rotation = rotation;
+    };
+
+    this._shakeTicker = ticker;
+    this.app.ticker.add(ticker);
+  }
+
+  stopShakeLoop() {
+    if (!this._shakeActive) {
+      return;
+    }
+
+    this._shakeActive = false;
+    if (this._shakeTicker) {
+      this.app?.ticker?.remove?.(this._shakeTicker);
+      this._shakeTicker = null;
+    }
+
+    if (this.container) {
+      this.container.x = this._baseX;
+      this.container.y = this._baseY;
+      this.container.rotation = 0;
+    }
   }
 
   reveal({

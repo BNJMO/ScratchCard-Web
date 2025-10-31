@@ -323,6 +323,42 @@ export async function createGame(mount, opts = {}) {
     winningCards: new Set(),
     pendingReveals: 0,
   };
+  const manualModeMatchGroups = new Map();
+
+  function stopAllManualShakeLoops() {
+    for (const group of manualModeMatchGroups.values()) {
+      for (const entry of group.cards ?? []) {
+        entry?.stopShakeLoop?.();
+      }
+    }
+    manualModeMatchGroups.clear();
+  }
+
+  function trackManualMatchShake(card, key) {
+    if (!card || key == null) {
+      return;
+    }
+
+    let group = manualModeMatchGroups.get(key);
+    if (!group) {
+      group = { cards: new Set(), shaking: false };
+      manualModeMatchGroups.set(key, group);
+    }
+
+    group.cards.add(card);
+
+    if (group.shaking) {
+      card.startShakeLoop?.();
+      return;
+    }
+
+    if (group.cards.size >= 2) {
+      group.shaking = true;
+      for (const entry of group.cards) {
+        entry.startShakeLoop?.();
+      }
+    }
+  }
 
   function resetRoundOutcome() {
     currentRoundOutcome.betResult = null;
@@ -335,6 +371,7 @@ export async function createGame(mount, opts = {}) {
     currentRoundOutcome.soundKey = null;
     currentRoundOutcome.winningCards.clear();
     currentRoundOutcome.pendingReveals = 0;
+    stopAllManualShakeLoops();
   }
 
   function applyRoundOutcomeMeta(meta = {}, assignments = []) {
@@ -457,6 +494,10 @@ export async function createGame(mount, opts = {}) {
       currentAssignments.get(assignmentKey) ??
       null;
 
+    if (!isAutoModeActive(getMode) && payloadKey != null) {
+      trackManualMatchShake(card, payloadKey);
+    }
+
     if (
       currentRoundOutcome.betResult === "win" &&
       currentRoundOutcome.winningKey != null &&
@@ -499,6 +540,7 @@ export async function createGame(mount, opts = {}) {
       animationsCompleted
     ) {
       currentRoundOutcome.feedbackPlayed = true;
+      stopAllManualShakeLoops();
 
       if (
         currentRoundOutcome.betResult === "win" &&
@@ -640,6 +682,7 @@ export async function createGame(mount, opts = {}) {
 
   function setRoundAssignments(assignments = [], meta = {}) {
     currentAssignments.clear();
+    stopAllManualShakeLoops();
     applyRoundOutcomeMeta(meta, assignments);
     for (const entry of assignments) {
       if (entry && typeof entry.row === "number" && typeof entry.col === "number") {
@@ -703,6 +746,7 @@ export async function createGame(mount, opts = {}) {
     scene.destroy();
     cardsByKey.clear();
     resetRoundOutcome();
+    stopAllManualShakeLoops();
   }
 
   function setAnimationsEnabled(enabled) {
