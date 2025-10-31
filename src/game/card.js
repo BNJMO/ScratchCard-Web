@@ -209,7 +209,7 @@ export class Card {
     this._animating = false;
   }
 
-  bump({ scaleMultiplier = 1.08, duration = 260 } = {}) {
+  bump({ scaleMultiplier = 1.08, duration = 350 } = {}) {
     const wrap = this._wrap;
     if (!wrap) return;
 
@@ -279,7 +279,7 @@ export class Card {
         return;
       }
       this.bump({ scaleMultiplier, duration });
-    }, 2000);
+    }, 1000);
   }
 
   forceFlatPose() {
@@ -576,10 +576,10 @@ export class Card {
   }
 
   startMatchShake({
-    amplitude = 3,
-    verticalFactor = 0.5,
-    rotationAmplitude = 0.012,
-    frequency = 6,
+    amplitude = 1.0,
+    verticalFactor = 1.0,
+    rotationAmplitude = 0.011,
+    frequency = 2,
   } = {}) {
     if (this.destroyed || this._shakeActive || !this.container) {
       return;
