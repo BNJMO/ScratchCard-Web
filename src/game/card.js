@@ -48,6 +48,7 @@ export class Card {
     this._layoutScale = 1;
     this._shakeActive = false;
     this._shakeTicker = null;
+    this._shakeIconBase = null;
     this._swapHandled = false;
     this._winHighlighted = false;
     this._winHighlightInterval = null;
@@ -587,24 +588,38 @@ export class Card {
       return;
     }
 
+    const icon = this._icon;
+    if (!icon) {
+      return;
+    }
+
     this._shakeActive = true;
-    const baseX = this._baseX;
-    const baseY = this._baseY;
-    const scaledAmplitude = amplitude * this._layoutScale;
+    const baseX = icon.x;
+    const baseY = icon.y;
+    const baseRotation = icon.rotation ?? 0;
+    const scaledAmplitude = amplitude;
     const scaledVertical = scaledAmplitude * verticalFactor;
     const startTime = performance.now();
 
+    this._shakeIconBase = { x: baseX, y: baseY, rotation: baseRotation };
+
     const tick = () => {
-      if (!this._shakeActive || this.destroyed || !this.container) {
+      if (
+        !this._shakeActive ||
+        this.destroyed ||
+        !this.container ||
+        !icon ||
+        icon.destroyed
+      ) {
         this.stopMatchShake();
         return;
       }
 
       const elapsed = (performance.now() - startTime) / 1000;
       const angle = elapsed * frequency * Math.PI * 2;
-      this.container.x = baseX + Math.sin(angle) * scaledAmplitude;
-      this.container.y = baseY + Math.cos(angle) * scaledVertical;
-      this.container.rotation = Math.sin(angle * 0.9) * rotationAmplitude;
+      icon.x = baseX + Math.sin(angle) * scaledAmplitude;
+      icon.y = baseY + Math.cos(angle) * scaledVertical;
+      icon.rotation = baseRotation + Math.sin(angle * 0.9) * rotationAmplitude;
     };
 
     this._shakeTicker = tick;
@@ -621,6 +636,17 @@ export class Card {
       this.app.ticker.remove(this._shakeTicker);
       this._shakeTicker = null;
     }
+    if (this._icon) {
+      const base = this._shakeIconBase ?? {
+        x: this._icon.x,
+        y: this._icon.y,
+        rotation: this._icon.rotation ?? 0,
+      };
+      this._icon.x = base.x;
+      this._icon.y = base.y;
+      this._icon.rotation = base.rotation;
+    }
+    this._shakeIconBase = null;
     if (this.container) {
       this.container.x = this._baseX;
       this.container.y = this._baseY;
