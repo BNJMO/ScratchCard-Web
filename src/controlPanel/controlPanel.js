@@ -97,10 +97,6 @@ export class ControlPanel extends EventTarget {
     this.buildToggle();
     this.buildBetAmountDisplay();
     this.buildBetControls();
-    this.buildMinesLabel();
-    this.buildMinesSelect();
-    this.buildGemsLabel();
-    this.buildGemsDisplay();
     this.buildModeSections();
     this.buildFooter();
 
