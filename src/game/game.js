@@ -326,11 +326,22 @@ export async function createGame(mount, opts = {}) {
   const manualMatchTracker = new Map();
   const manualShakingCards = new Set();
 
-  function stopAllMatchShakes() {
+  function stopAllMatchShakes({ preserve } = {}) {
+    const preserveSet = preserve ? new Set(preserve) : null;
+    const nextTracked = new Set();
     for (const card of manualShakingCards) {
+      if (preserveSet?.has(card)) {
+        nextTracked.add(card);
+        continue;
+      }
       card?.stopMatchShake?.();
     }
     manualShakingCards.clear();
+    if (preserveSet) {
+      for (const card of nextTracked) {
+        manualShakingCards.add(card);
+      }
+    }
   }
 
   function resetManualMatchTracking() {
@@ -504,7 +515,7 @@ export async function createGame(mount, opts = {}) {
         manualMatchTracker.set(payloadKey, tracked);
       }
       tracked.add(card);
-      if (tracked.size === 2 && state.revealed < state.totalTiles) {
+      if (tracked.size >= 2 && state.revealed < state.totalTiles) {
         for (const trackedCard of tracked) {
           if (!manualShakingCards.has(trackedCard)) {
             trackedCard.startMatchShake?.();
@@ -531,7 +542,20 @@ export async function createGame(mount, opts = {}) {
     const animationsCompleted = currentRoundOutcome.pendingReveals <= 0;
 
     if (allCardsRevealed) {
-      stopAllMatchShakes();
+      const shouldPreserveWinShake =
+        currentRoundOutcome.betResult === "win" &&
+        currentRoundOutcome.winningCards.size > 0;
+      if (shouldPreserveWinShake) {
+        stopAllMatchShakes({ preserve: currentRoundOutcome.winningCards });
+        for (const winningCard of currentRoundOutcome.winningCards) {
+          if (!manualShakingCards.has(winningCard)) {
+            winningCard.startMatchShake?.();
+            manualShakingCards.add(winningCard);
+          }
+        }
+      } else {
+        stopAllMatchShakes();
+      }
       manualMatchTracker.clear();
     }
 
