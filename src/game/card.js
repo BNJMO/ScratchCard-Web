@@ -47,6 +47,8 @@ export class Card {
     this._bumpToken = null;
     this._layoutScale = 1;
     this._shakeActive = false;
+    this._shakeBaseRotation = 0;
+    this._shakeTicker = null;
     this._swapHandled = false;
     this._winHighlighted = false;
     this._winHighlightInterval = null;
@@ -207,6 +209,57 @@ export class Card {
     this._animating = false;
   }
 
+  startShake({ rotationAmplitude = 0.02, positionAmplitude = 0.6, speed = 0.12 } = {}) {
+    if (
+      this.disableAnimations ||
+      this._shakeActive ||
+      !this.container ||
+      this.destroyed
+    ) {
+      return;
+    }
+
+    this._shakeActive = true;
+    const container = this.container;
+    const baseX = this._baseX;
+    const baseY = this._baseY;
+    const baseRotation = container.rotation ?? 0;
+    this._shakeBaseRotation = baseRotation;
+    let elapsed = 0;
+
+    const update = (delta) => {
+      if (!this._shakeActive || !container || container.destroyed) {
+        return;
+      }
+      elapsed += delta;
+      const t = elapsed * speed;
+      const angle = Math.sin(t) * rotationAmplitude;
+      const offsetX = Math.sin(t * 1.7) * positionAmplitude * this._layoutScale;
+      const offsetY = Math.cos(t * 1.3) * positionAmplitude * this._layoutScale;
+      container.rotation = baseRotation + angle;
+      container.x = baseX + offsetX;
+      container.y = baseY + offsetY;
+    };
+
+    this._shakeTicker = update;
+    this.app.ticker.add(update);
+  }
+
+  stopShake() {
+    if (this._shakeTicker) {
+      this.app.ticker.remove(this._shakeTicker);
+      this._shakeTicker = null;
+    }
+
+    this._shakeActive = false;
+    if (this.container && !this.destroyed) {
+      this.container.x = this._baseX;
+      this.container.y = this._baseY;
+      this.container.rotation = this._shakeBaseRotation ?? 0;
+    }
+    this._shakeBaseRotation = 0;
+  }
+
   bump({ scaleMultiplier = 1.08, duration = 260 } = {}) {
     const wrap = this._wrap;
     if (!wrap) return;
@@ -281,13 +334,13 @@ export class Card {
   }
 
   forceFlatPose() {
+    this.stopShake();
     if (!this._wrap?.scale || !this.container) return;
     this._wrap.scale.x = this._wrap.scale.y = 1;
     this.setSkew(0);
     this.container.x = this._baseX;
     this.container.y = this._baseY;
     this.container.rotation = 0;
-    this._shakeActive = false;
     this._bumpToken = null;
     this.#stopWinHighlightLoop();
   }
@@ -534,6 +587,7 @@ export class Card {
     this.destroyed = true;
     this.stopHover();
     this.stopWiggle();
+    this.stopShake();
     this._bumpToken = null;
     this.#cancelSpawnAnimation();
     this.#stopWinHighlightLoop();

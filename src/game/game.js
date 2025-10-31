@@ -323,8 +323,44 @@ export async function createGame(mount, opts = {}) {
     winningCards: new Set(),
     pendingReveals: 0,
   };
+  const manualShakeGroups = new Map();
+
+  function stopAllManualShakes() {
+    for (const group of manualShakeGroups.values()) {
+      for (const shakingCard of group.cards ?? []) {
+        shakingCard?.stopShake?.();
+      }
+    }
+    manualShakeGroups.clear();
+  }
+
+  function trackManualShake(card, key) {
+    if (!card || key == null) {
+      return;
+    }
+
+    let group = manualShakeGroups.get(key);
+    if (!group) {
+      group = { cards: new Set(), shaking: false };
+      manualShakeGroups.set(key, group);
+    }
+
+    group.cards.add(card);
+    if (group.shaking) {
+      card.startShake?.();
+      return;
+    }
+
+    if (group.cards.size >= 2) {
+      group.shaking = true;
+      for (const entry of group.cards) {
+        entry.startShake?.();
+      }
+    }
+  }
 
   function resetRoundOutcome() {
+    stopAllManualShakes();
     currentRoundOutcome.betResult = null;
     currentRoundOutcome.winningKey = null;
     currentRoundOutcome.winningCountRequired = 0;
@@ -467,6 +503,10 @@ export async function createGame(mount, opts = {}) {
       currentRoundOutcome.winningCards.add(card);
     }
 
+    if (!isAutoModeActive(getMode) && payloadKey != null) {
+      trackManualShake(card, payloadKey);
+    }
+
     if (card._pendingWinningReveal) {
       currentRoundOutcome.pendingWinningReveals = Math.max(
         0,
@@ -492,6 +532,10 @@ export async function createGame(mount, opts = {}) {
 
     const allCardsRevealed = state.revealed >= state.totalTiles;
     const animationsCompleted = currentRoundOutcome.pendingReveals <= 0;
+
+    if (allCardsRevealed) {
+      stopAllManualShakes();
+    }
 
     if (
       !currentRoundOutcome.feedbackPlayed &&
