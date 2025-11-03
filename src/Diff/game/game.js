@@ -1476,7 +1476,8 @@ export async function createGame(mount, opts = {}) {
       tile._animating = true;
 
       if (revealedByPlayer) {
-        playSoundEffect("tileFlip");
+        const pitch = 0.9 + Math.random() * 0.2;
+        playSoundEffect("tileFlip", { speed: pitch });
       }
 
       const startScaleY = wrap.scale.y;

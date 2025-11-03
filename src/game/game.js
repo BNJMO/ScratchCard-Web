@@ -460,7 +460,8 @@ export async function createGame(mount, opts = {}) {
     if (!card) return;
     clearScheduledAutoReveal(card);
     const content = contentLibrary[face] ?? {};
-    soundManager.play("tileFlip");
+    const pitch = 0.9 + Math.random() * 0.2;
+    soundManager.play("tileFlip", { speed: pitch });
     card._revealedFace = face;
     const iconRevealFactor = forceFullIconSize ? 1 : iconRevealedSizeFactor;
     const isWinningFace =
