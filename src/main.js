@@ -460,7 +460,9 @@ function stopAutoBetProcess({ reason = "user", completed = false } = {}) {
   if (shouldWaitForRound) {
     autoStopPending = true;
     setAutoRunFinishingState();
-    game?.revealRemainingTiles?.();
+    if (!game?.isAutoRevealInProgress?.()) {
+      game?.revealRemainingTiles?.();
+    }
     return;
   }
 
