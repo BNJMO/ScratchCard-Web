@@ -350,6 +350,18 @@ export async function createGame(mount, opts = {}) {
     }
   }
 
+  function isAutoRevealInProgress() {
+    if (scheduledAutoRevealTimers.size > 0) {
+      return true;
+    }
+    for (const card of scene.cards) {
+      if (card?._autoRevealScheduled) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function stopAllMatchShakes({ preserve } = {}) {
     const preserveSet = preserve ? new Set(preserve) : null;
     const nextTracked = new Set();
@@ -615,6 +627,9 @@ export async function createGame(mount, opts = {}) {
     const excludedCards = new Set(
       Array.isArray(exclude) ? exclude.filter(Boolean) : []
     );
+    if (excludedCards.size === 0 && isAutoRevealInProgress()) {
+      return;
+    }
     const unrevealed = scene.cards.filter(
       (card) =>
         !card.revealed &&
@@ -829,6 +844,7 @@ export async function createGame(mount, opts = {}) {
     selectRandomTile,
     revealAutoSelections,
     revealRemainingTiles,
+    isAutoRevealInProgress,
     getAutoResetDelay: () => autoResetDelayMs,
     setAnimationsEnabled,
     setRoundAssignments,

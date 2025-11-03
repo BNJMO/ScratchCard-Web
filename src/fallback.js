@@ -183,6 +183,10 @@ export function createFallbackMinesGame(mountSelector, opts = {}) {
     });
   }
 
+  function isAutoRevealInProgress() {
+    return false;
+  }
+
   function setMines() {}
   function showWinPopup() {}
 
@@ -209,6 +213,7 @@ export function createFallbackMinesGame(mountSelector, opts = {}) {
     clearAutoSelections: () => {},
     applyAutoSelections: () => 0,
     revealRemainingTiles,
+    isAutoRevealInProgress,
     getAutoResetDelay: () => opts.autoResetDelayMs ?? 1500,
     setAnimationsEnabled: () => {},
   };
