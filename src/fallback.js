@@ -113,7 +113,7 @@ export function createFallbackMinesGame(mountSelector, opts = {}) {
       if (currentOutcome.betResult === 'win') {
         currentOutcome.winningTiles.forEach((winningTile) => {
           winningTile.classList.add('fallback-tile--win');
-          winningTile.style.backgroundColor = '#5800a5';
+          winningTile.style.backgroundColor = '#EAFF00';
         });
       }
       currentOutcome.winningTiles.clear();
