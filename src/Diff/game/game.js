@@ -49,7 +49,7 @@ const PALETTE = {
   winPopupSeparationLine: 0x1b2931,
 };
 
-const AUTO_SELECTION_COLOR = 0x5800a5;
+const AUTO_SELECTION_COLOR = 0xeaff00;
 
 function tween(
   app,

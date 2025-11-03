@@ -46,7 +46,7 @@ const DEFAULT_PALETTE = {
   winPopupSeparationLine: 0x1b2931,
 };
 
-const WIN_FACE_COLOR = 0x5800a5;
+const WIN_FACE_COLOR = 0xeaff00;
 
 const SOUND_ALIASES = {
   tileHover: "mines.tileHover",

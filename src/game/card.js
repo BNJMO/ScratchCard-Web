@@ -1,7 +1,7 @@
 import { BlurFilter, Container, Graphics, Sprite } from "pixi.js";
 import Ease from "../ease.js";
 
-const AUTO_SELECTION_COLOR = 0x5800a5;
+const AUTO_SELECTION_COLOR = 0xeaff00;
 
 /**
  * Card encapsulates the visual and interaction logic for a single tile on the grid.
@@ -264,7 +264,7 @@ export class Card {
     });
   }
 
-  highlightWin({ faceColor = 0x5800a5, scaleMultiplier = 1.08, duration = 260 } = {}) {
+  highlightWin({ faceColor = 0xeaff00, scaleMultiplier = 1.08, duration = 260 } = {}) {
     if (!this.revealed || this._winHighlighted) {
       return;
     }
