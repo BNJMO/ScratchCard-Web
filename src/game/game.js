@@ -325,6 +325,30 @@ export async function createGame(mount, opts = {}) {
   };
   const manualMatchTracker = new Map();
   const manualShakingCards = new Set();
+  const scheduledAutoRevealTimers = new Set();
+
+  function clearScheduledAutoReveal(card) {
+    if (!card) return;
+    const handle = card._autoRevealTimer;
+    if (handle != null) {
+      clearTimeout(handle);
+      scheduledAutoRevealTimers.delete(handle);
+      card._autoRevealTimer = null;
+    }
+    card._autoRevealScheduled = false;
+  }
+
+  function cancelPendingAutoReveals() {
+    if (scheduledAutoRevealTimers.size > 0) {
+      for (const handle of scheduledAutoRevealTimers) {
+        clearTimeout(handle);
+      }
+      scheduledAutoRevealTimers.clear();
+    }
+    for (const card of scene.cards) {
+      clearScheduledAutoReveal(card);
+    }
+  }
 
   function stopAllMatchShakes({ preserve } = {}) {
     const preserveSet = preserve ? new Set(preserve) : null;
@@ -360,6 +384,7 @@ export async function createGame(mount, opts = {}) {
     currentRoundOutcome.soundKey = null;
     currentRoundOutcome.winningCards.clear();
     currentRoundOutcome.pendingReveals = 0;
+    cancelPendingAutoReveals();
     resetManualMatchTracking();
   }
 
@@ -397,7 +422,7 @@ export async function createGame(mount, opts = {}) {
       card.setDisableAnimations(disableAnimations);
       card._assignedContent = currentAssignments.get(key) ?? null;
       card._pendingWinningReveal = false;
-      card._autoRevealScheduled = false;
+      clearScheduledAutoReveal(card);
       card.stopMatchShake?.();
     }
   }
@@ -421,6 +446,7 @@ export async function createGame(mount, opts = {}) {
     { revealedByPlayer = true, forceFullIconSize = false } = {}
   ) {
     if (!card) return;
+    clearScheduledAutoReveal(card);
     const content = contentLibrary[face] ?? {};
     soundManager.play("tileFlip");
     card._revealedFace = face;
@@ -592,6 +618,7 @@ export async function createGame(mount, opts = {}) {
     const unrevealed = scene.cards.filter(
       (card) =>
         !card.revealed &&
+        !card.destroyed &&
         !card._animating &&
         !card._autoRevealScheduled &&
         !excludedCards.has(card)
@@ -605,10 +632,13 @@ export async function createGame(mount, opts = {}) {
     });
 
     ordered.forEach((card, index) => {
+      clearScheduledAutoReveal(card);
       card._autoRevealScheduled = true;
       const assignedFace = currentAssignments.get(`${card.row},${card.col}`) ?? null;
       const delay = disableAnimations ? 0 : revealAllIntervalDelay * index;
-      setTimeout(() => {
+      const handle = setTimeout(() => {
+        scheduledAutoRevealTimers.delete(handle);
+        card._autoRevealTimer = null;
         card._autoRevealScheduled = false;
         if (card.destroyed || card.revealed) {
           return;
@@ -624,6 +654,8 @@ export async function createGame(mount, opts = {}) {
         });
         notifyStateChange();
       }, delay);
+      scheduledAutoRevealTimers.add(handle);
+      card._autoRevealTimer = handle;
     });
   }
 
