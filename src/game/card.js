@@ -1,7 +1,7 @@
 import { BlurFilter, Container, Graphics, Sprite } from "pixi.js";
 import Ease from "../ease.js";
 
-const AUTO_SELECTION_COLOR = 0xeaff00;
+const AUTO_SELECTION_COLOR = 0xCFDD00;
 
 /**
  * Card encapsulates the visual and interaction logic for a single tile on the grid.
