@@ -397,6 +397,7 @@ export async function createGame(mount, opts = {}) {
       card.setDisableAnimations(disableAnimations);
       card._assignedContent = currentAssignments.get(key) ?? null;
       card._pendingWinningReveal = false;
+      card._autoRevealScheduled = false;
       card.stopMatchShake?.();
     }
   }
@@ -592,6 +593,7 @@ export async function createGame(mount, opts = {}) {
       (card) =>
         !card.revealed &&
         !card._animating &&
+        !card._autoRevealScheduled &&
         !excludedCards.has(card)
     );
     if (!unrevealed.length) return;
@@ -603,9 +605,14 @@ export async function createGame(mount, opts = {}) {
     });
 
     ordered.forEach((card, index) => {
+      card._autoRevealScheduled = true;
       const assignedFace = currentAssignments.get(`${card.row},${card.col}`) ?? null;
       const delay = disableAnimations ? 0 : revealAllIntervalDelay * index;
       setTimeout(() => {
+        card._autoRevealScheduled = false;
+        if (card.destroyed || card.revealed) {
+          return;
+        }
         const outcome = rules.revealResult({
           row: card.row,
           col: card.col,
