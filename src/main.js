@@ -174,7 +174,6 @@ serverRelay.addEventListener("incoming", (event) => {
       case "start-bet":
         performBet();
         setControlPanelRandomState(true);
-        setControlPanelRevealAllState(true);
         break;
       case "bet-result":
         applyServerReveal(payload);
@@ -245,12 +244,6 @@ function setControlPanelRandomState(isClickable) {
   );
 }
 
-function setControlPanelRevealAllState(isClickable) {
-  controlPanel?.setRevealAllState?.(
-    isClickable ? "clickable" : "non-clickable"
-  );
-}
-
 function setControlPanelAutoStartState(isClickable) {
   controlPanel?.setAutoStartButtonState?.(
     isClickable ? "clickable" : "non-clickable"
@@ -266,7 +259,6 @@ function setControlPanelMinesState(isClickable) {
 function disableServerRoundSetupControls() {
   setControlPanelBetState(false);
   setControlPanelRandomState(false);
-  setControlPanelRevealAllState(false);
   setControlPanelMinesState(false);
   controlPanel?.setModeToggleClickable?.(false);
   controlPanel?.setBetControlsClickable?.(false);
@@ -320,7 +312,6 @@ function beginSelectionDelay() {
   selectionPending = true;
   setControlPanelBetState(false);
   setControlPanelRandomState(false);
-  setControlPanelRevealAllState(false);
 }
 
 function setAutoRunUIState(active) {
@@ -485,7 +476,6 @@ function applyRoundInteractiveState(state) {
   if (controlPanelMode === "auto") {
     setControlPanelBetState(false);
     setControlPanelRandomState(false);
-    setControlPanelRevealAllState(false);
     setGameBoardInteractivity(false);
     cashoutAvailable = false;
     return;
@@ -497,20 +487,18 @@ function applyRoundInteractiveState(state) {
   if (selectionPending || state?.waitingForChoice) {
     setControlPanelBetState(false);
     setControlPanelRandomState(false);
-    setControlPanelRevealAllState(false);
     cashoutAvailable = false;
     return;
   }
 
   cashoutAvailable = false;
+  const hasHiddenTiles = revealedCount < totalTiles;
   if (betButtonMode === "scratch") {
-    setControlPanelBetState(true);
+    setControlPanelBetState(hasHiddenTiles);
   } else {
     setControlPanelBetState(false);
   }
   setControlPanelRandomState(true);
-  const hasHiddenTiles = revealedCount < totalTiles;
-  setControlPanelRevealAllState(hasHiddenTiles);
 }
 
 function prepareForNewRoundState() {
@@ -526,7 +514,6 @@ function prepareForNewRoundState() {
     setControlPanelBetState(true);
   }
   setControlPanelRandomState(!isAutoMode);
-  setControlPanelRevealAllState(!isAutoMode);
   setGameBoardInteractivity(!isAutoMode);
   minesSelectionLocked = false;
 
@@ -551,7 +538,6 @@ function finalizeRound() {
   clearSelectionDelay();
   setControlPanelBetMode("bet");
   setControlPanelRandomState(false);
-  setControlPanelRevealAllState(false);
   setGameBoardInteractivity(false);
   minesSelectionLocked = false;
   setControlPanelMinesState(true);
@@ -602,7 +588,7 @@ function handleScratchButtonClick() {
     return;
   }
 
-  handleRevealAllClick();
+  revealRemainingTilesAndFinalize();
 }
 
 function markManualRoundForReset() {
@@ -626,7 +612,7 @@ function handleCashout() {
   finalizeRound();
 }
 
-function handleRevealAllClick() {
+function revealRemainingTilesAndFinalize() {
   if (!roundActive || selectionPending) {
     return;
   }
@@ -930,7 +916,6 @@ const opts = {
           }
         }
         setControlPanelRandomState(false);
-        setControlPanelRevealAllState(false);
         setGameBoardInteractivity(false);
         if (!autoRunActive) {
           setControlPanelAutoStartState(true);
@@ -942,13 +927,11 @@ const opts = {
           manualRoundNeedsReset = false;
           setGameBoardInteractivity(false);
           setControlPanelRandomState(false);
-          setControlPanelRevealAllState(false);
           setControlPanelBetState(true);
         } else {
           setGameBoardInteractivity(true);
           if (!roundActive) {
             setControlPanelRandomState(true);
-            setControlPanelRevealAllState(true);
           }
         }
       }
@@ -1008,7 +991,6 @@ const opts = {
     });
     controlPanel.addEventListener("bet", handleBetButtonClick);
     controlPanel.addEventListener("randompick", handleRandomPickClick);
-    controlPanel.addEventListener("revealall", handleRevealAllClick);
     controlPanel.addEventListener("startautobet", handleStartAutobetClick);
     finalizeRound();
     controlPanel.setBetAmountDisplay("$0.00");
