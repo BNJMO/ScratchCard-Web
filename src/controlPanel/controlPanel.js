@@ -1182,10 +1182,16 @@ export class ControlPanel extends EventTarget {
 
   setBetButtonMode(mode) {
     if (!this.betButton) return;
-    const normalized = mode === "cashout" ? "cashout" : "bet";
+    const normalized =
+      mode === "cashout" ? "cashout" : mode === "scratch" ? "scratch" : "bet";
     this.betButtonMode = normalized;
-    this.betButton.textContent =
-      normalized === "cashout" ? "Cashout" : "Bet";
+    let label = "Bet";
+    if (normalized === "cashout") {
+      label = "Cashout";
+    } else if (normalized === "scratch") {
+      label = "Scratch";
+    }
+    this.betButton.textContent = label;
     this.betButton.dataset.mode = normalized;
   }
 

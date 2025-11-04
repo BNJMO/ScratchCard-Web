@@ -227,7 +227,9 @@ serverRelay.addEventListener("demomodechange", (event) => {
 });
 
 function setControlPanelBetMode(mode) {
-  betButtonMode = "bet";
+  const normalized =
+    mode === "cashout" ? "cashout" : mode === "scratch" ? "scratch" : "bet";
+  betButtonMode = normalized;
   controlPanel?.setBetButtonMode?.(betButtonMode);
 }
 
@@ -501,7 +503,11 @@ function applyRoundInteractiveState(state) {
   }
 
   cashoutAvailable = false;
-  setControlPanelBetState(false);
+  if (betButtonMode === "scratch") {
+    setControlPanelBetState(true);
+  } else {
+    setControlPanelBetState(false);
+  }
   setControlPanelRandomState(true);
   const hasHiddenTiles = revealedCount < totalTiles;
   setControlPanelRevealAllState(hasHiddenTiles);
@@ -511,9 +517,14 @@ function prepareForNewRoundState() {
   roundActive = true;
   cashoutAvailable = false;
   clearSelectionDelay();
-  setControlPanelBetMode("bet");
-  setControlPanelBetState(false);
   const isAutoMode = controlPanelMode === "auto";
+  if (isAutoMode) {
+    setControlPanelBetMode("bet");
+    setControlPanelBetState(false);
+  } else {
+    setControlPanelBetMode("scratch");
+    setControlPanelBetState(true);
+  }
   setControlPanelRandomState(!isAutoMode);
   setControlPanelRevealAllState(!isAutoMode);
   setGameBoardInteractivity(!isAutoMode);
@@ -575,6 +586,8 @@ function finalizeRound() {
 function handleBetButtonClick() {
   if (betButtonMode === "cashout") {
     handleCashout();
+  } else if (betButtonMode === "scratch") {
+    handleScratchButtonClick();
   } else {
     let betResult = "lost";
     if (demoMode || suppressRelay) {
@@ -582,6 +595,14 @@ function handleBetButtonClick() {
     }
     handleBet(betResult);
   }
+}
+
+function handleScratchButtonClick() {
+  if (controlPanelMode !== "manual") {
+    return;
+  }
+
+  handleRevealAllClick();
 }
 
 function markManualRoundForReset() {
