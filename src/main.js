@@ -174,7 +174,6 @@ serverRelay.addEventListener("incoming", (event) => {
       case "start-bet":
         performBet();
         setControlPanelRandomState(true);
-        setControlPanelRevealAllState(true);
         break;
       case "bet-result":
         applyServerReveal(payload);
@@ -227,7 +226,9 @@ serverRelay.addEventListener("demomodechange", (event) => {
 });
 
 function setControlPanelBetMode(mode) {
-  betButtonMode = "bet";
+  const normalized =
+    mode === "cashout" ? "cashout" : mode === "scratch" ? "scratch" : "bet";
+  betButtonMode = normalized;
   controlPanel?.setBetButtonMode?.(betButtonMode);
 }
 
@@ -239,12 +240,6 @@ function setControlPanelBetState(isClickable) {
 
 function setControlPanelRandomState(isClickable) {
   controlPanel?.setRandomPickState?.(
-    isClickable ? "clickable" : "non-clickable"
-  );
-}
-
-function setControlPanelRevealAllState(isClickable) {
-  controlPanel?.setRevealAllState?.(
     isClickable ? "clickable" : "non-clickable"
   );
 }
@@ -264,7 +259,6 @@ function setControlPanelMinesState(isClickable) {
 function disableServerRoundSetupControls() {
   setControlPanelBetState(false);
   setControlPanelRandomState(false);
-  setControlPanelRevealAllState(false);
   setControlPanelMinesState(false);
   controlPanel?.setModeToggleClickable?.(false);
   controlPanel?.setBetControlsClickable?.(false);
@@ -318,7 +312,6 @@ function beginSelectionDelay() {
   selectionPending = true;
   setControlPanelBetState(false);
   setControlPanelRandomState(false);
-  setControlPanelRevealAllState(false);
 }
 
 function setAutoRunUIState(active) {
@@ -483,7 +476,6 @@ function applyRoundInteractiveState(state) {
   if (controlPanelMode === "auto") {
     setControlPanelBetState(false);
     setControlPanelRandomState(false);
-    setControlPanelRevealAllState(false);
     setGameBoardInteractivity(false);
     cashoutAvailable = false;
     return;
@@ -495,27 +487,33 @@ function applyRoundInteractiveState(state) {
   if (selectionPending || state?.waitingForChoice) {
     setControlPanelBetState(false);
     setControlPanelRandomState(false);
-    setControlPanelRevealAllState(false);
     cashoutAvailable = false;
     return;
   }
 
   cashoutAvailable = false;
-  setControlPanelBetState(false);
-  setControlPanelRandomState(true);
   const hasHiddenTiles = revealedCount < totalTiles;
-  setControlPanelRevealAllState(hasHiddenTiles);
+  if (betButtonMode === "scratch") {
+    setControlPanelBetState(hasHiddenTiles);
+  } else {
+    setControlPanelBetState(false);
+  }
+  setControlPanelRandomState(true);
 }
 
 function prepareForNewRoundState() {
   roundActive = true;
   cashoutAvailable = false;
   clearSelectionDelay();
-  setControlPanelBetMode("bet");
-  setControlPanelBetState(false);
   const isAutoMode = controlPanelMode === "auto";
+  if (isAutoMode) {
+    setControlPanelBetMode("bet");
+    setControlPanelBetState(false);
+  } else {
+    setControlPanelBetMode("scratch");
+    setControlPanelBetState(true);
+  }
   setControlPanelRandomState(!isAutoMode);
-  setControlPanelRevealAllState(!isAutoMode);
   setGameBoardInteractivity(!isAutoMode);
   minesSelectionLocked = false;
 
@@ -540,7 +538,6 @@ function finalizeRound() {
   clearSelectionDelay();
   setControlPanelBetMode("bet");
   setControlPanelRandomState(false);
-  setControlPanelRevealAllState(false);
   setGameBoardInteractivity(false);
   minesSelectionLocked = false;
   setControlPanelMinesState(true);
@@ -575,6 +572,8 @@ function finalizeRound() {
 function handleBetButtonClick() {
   if (betButtonMode === "cashout") {
     handleCashout();
+  } else if (betButtonMode === "scratch") {
+    handleScratchButtonClick();
   } else {
     let betResult = "lost";
     if (demoMode || suppressRelay) {
@@ -582,6 +581,14 @@ function handleBetButtonClick() {
     }
     handleBet(betResult);
   }
+}
+
+function handleScratchButtonClick() {
+  if (controlPanelMode !== "manual") {
+    return;
+  }
+
+  revealRemainingTilesAndFinalize();
 }
 
 function markManualRoundForReset() {
@@ -605,7 +612,7 @@ function handleCashout() {
   finalizeRound();
 }
 
-function handleRevealAllClick() {
+function revealRemainingTilesAndFinalize() {
   if (!roundActive || selectionPending) {
     return;
   }
@@ -909,7 +916,6 @@ const opts = {
           }
         }
         setControlPanelRandomState(false);
-        setControlPanelRevealAllState(false);
         setGameBoardInteractivity(false);
         if (!autoRunActive) {
           setControlPanelAutoStartState(true);
@@ -921,13 +927,11 @@ const opts = {
           manualRoundNeedsReset = false;
           setGameBoardInteractivity(false);
           setControlPanelRandomState(false);
-          setControlPanelRevealAllState(false);
           setControlPanelBetState(true);
         } else {
           setGameBoardInteractivity(true);
           if (!roundActive) {
             setControlPanelRandomState(true);
-            setControlPanelRevealAllState(true);
           }
         }
       }
@@ -987,7 +991,6 @@ const opts = {
     });
     controlPanel.addEventListener("bet", handleBetButtonClick);
     controlPanel.addEventListener("randompick", handleRandomPickClick);
-    controlPanel.addEventListener("revealall", handleRevealAllClick);
     controlPanel.addEventListener("startautobet", handleStartAutobetClick);
     finalizeRound();
     controlPanel.setBetAmountDisplay("$0.00");
