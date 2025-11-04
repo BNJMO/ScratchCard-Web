@@ -575,7 +575,7 @@ export async function createGame(mount, opts = {}) {
         tracked.triggered = true;
         currentRoundOutcome.manualMatchPairsTriggered += 1;
         const matchCount = currentRoundOutcome.manualMatchPairsTriggered;
-        const pitchIncrease = Math.floor(matchCount / 2) * 0.05;
+        const pitchIncrease = Math.max(0, matchCount - 1) * 0.05;
         const playbackSpeed = 1 + pitchIncrease;
         soundManager.play("twoMatch", { speed: playbackSpeed });
         for (const trackedCard of tracked.cards) {
