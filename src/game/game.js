@@ -817,18 +817,25 @@ export async function createGame(mount, opts = {}) {
   }
 
   function selectRandomTile() {
-    const candidates = scene.cards.filter(
-      (card) => !card.revealed && !card._animating
-    );
+    const pendingSelection = rules.selectedTile;
+    const candidates = scene.cards.filter((card) => {
+      if (card.revealed || card._animating || card.destroyed) {
+        return false;
+      }
+      if (
+        pendingSelection &&
+        card.row === pendingSelection.row &&
+        card.col === pendingSelection.col
+      ) {
+        return false;
+      }
+      return true;
+    });
     if (!candidates.length) return null;
     const card =
       candidates[Math.floor(Math.random() * candidates.length)];
     handleCardTap(card);
     return { row: card.row, col: card.col };
-  }
-
-  function hasPendingReveals() {
-    return currentRoundOutcome.pendingReveals > 0;
   }
 
   function revealAutoSelections(results = []) {
@@ -874,7 +881,6 @@ export async function createGame(mount, opts = {}) {
     destroy,
     revealSelectedCard,
     selectRandomTile,
-    hasPendingReveals,
     revealAutoSelections,
     revealRemainingTiles,
     isAutoRevealInProgress,

@@ -774,7 +774,7 @@ function handleGameStateChange(state) {
 }
 
 function handleRandomPickClick() {
-  if (!roundActive || selectionPending || game?.hasPendingReveals?.()) {
+  if (!roundActive || selectionPending) {
     return;
   }
 
