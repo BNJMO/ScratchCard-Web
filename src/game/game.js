@@ -827,6 +827,10 @@ export async function createGame(mount, opts = {}) {
     return { row: card.row, col: card.col };
   }
 
+  function hasPendingReveals() {
+    return currentRoundOutcome.pendingReveals > 0;
+  }
+
   function revealAutoSelections(results = []) {
     if (!Array.isArray(results)) return;
     for (const entry of results) {
@@ -870,6 +874,7 @@ export async function createGame(mount, opts = {}) {
     destroy,
     revealSelectedCard,
     selectRandomTile,
+    hasPendingReveals,
     revealAutoSelections,
     revealRemainingTiles,
     isAutoRevealInProgress,
