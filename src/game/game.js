@@ -332,6 +332,7 @@ export async function createGame(mount, opts = {}) {
     soundKey: null,
     winningCards: new Set(),
     pendingReveals: 0,
+    manualMatchPairsTriggered: 0,
   };
   const manualMatchTracker = new Map();
   const manualShakingCards = new Set();
@@ -392,6 +393,7 @@ export async function createGame(mount, opts = {}) {
 
   function resetManualMatchTracking() {
     manualMatchTracker.clear();
+    currentRoundOutcome.manualMatchPairsTriggered = 0;
     stopAllMatchShakes();
   }
 
@@ -406,6 +408,7 @@ export async function createGame(mount, opts = {}) {
     currentRoundOutcome.soundKey = null;
     currentRoundOutcome.winningCards.clear();
     currentRoundOutcome.pendingReveals = 0;
+    currentRoundOutcome.manualMatchPairsTriggered = 0;
     cancelPendingAutoReveals();
     resetManualMatchTracking();
   }
@@ -558,6 +561,7 @@ export async function createGame(mount, opts = {}) {
     if (autoModeActive) {
       stopAllMatchShakes();
       manualMatchTracker.clear();
+      currentRoundOutcome.manualMatchPairsTriggered = 0;
     } else if (payloadKey != null) {
       let tracked = manualMatchTracker.get(payloadKey);
       if (!tracked) {
@@ -569,7 +573,11 @@ export async function createGame(mount, opts = {}) {
         tracked.cards.size >= 2 && state.revealed < state.totalTiles;
       if (eligibleForEffect && !tracked.triggered) {
         tracked.triggered = true;
-        soundManager.play("twoMatch");
+        currentRoundOutcome.manualMatchPairsTriggered += 1;
+        const matchCount = currentRoundOutcome.manualMatchPairsTriggered;
+        const pitchIncrease = Math.floor(matchCount / 2) * 0.05;
+        const playbackSpeed = 1 + pitchIncrease;
+        soundManager.play("twoMatch", { speed: playbackSpeed });
         for (const trackedCard of tracked.cards) {
           trackedCard.playMatchSpark?.();
         }
