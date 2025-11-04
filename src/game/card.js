@@ -15,6 +15,7 @@ export class Card {
     palette,
     animationOptions,
     iconOptions,
+    matchEffects,
     row,
     col,
     tileSize,
@@ -28,6 +29,10 @@ export class Card {
     this.iconOptions = {
       sizePercentage: iconOptions?.sizePercentage ?? 0.7,
       revealedSizeFactor: iconOptions?.revealedSizeFactor ?? 0.85,
+    };
+    this.matchEffects = {
+      sparkTexture: matchEffects?.sparkTexture ?? null,
+      sparkDuration: Math.max(0, matchEffects?.sparkDuration ?? 1500),
     };
     this.row = row;
     this.col = col;
@@ -53,6 +58,8 @@ export class Card {
     this._winHighlighted = false;
     this._winHighlightInterval = null;
     this._spawnTweenCancel = null;
+    this._matchEffectsLayer = null;
+    this._activeSparkCleanup = null;
 
     this._tiltDir = 1;
     this._baseX = 0;
@@ -541,6 +548,7 @@ export class Card {
     this.stopHover();
     this.stopWiggle();
     this.stopMatchShake();
+    this._activeSparkCleanup?.();
     this._bumpToken = null;
     this.#cancelSpawnAnimation();
     this.#stopWinHighlightLoop();
@@ -549,6 +557,7 @@ export class Card {
     this._card = null;
     this._inset = null;
     this._icon = null;
+    this._matchEffectsLayer = null;
   }
 
   #stopWinHighlightLoop() {
@@ -654,6 +663,112 @@ export class Card {
     }
   }
 
+  playMatchSpark() {
+    if (
+      this.destroyed ||
+      this.disableAnimations ||
+      !this._matchEffectsLayer ||
+      !this.matchEffects?.sparkTexture
+    ) {
+      return;
+    }
+
+    this._activeSparkCleanup?.();
+
+    const texture = this.matchEffects.sparkTexture;
+    const sprite = new Sprite(texture);
+    sprite.anchor.set(0.5);
+    sprite.position.set(0, 0);
+    sprite.alpha = 0;
+
+    const textureWidth =
+      texture?.width ?? texture?.orig?.width ?? texture?.baseTexture?.width ?? 1;
+    const textureHeight =
+      texture?.height ?? texture?.orig?.height ?? texture?.baseTexture?.height ?? 1;
+    const maxDimension = Math.max(1, textureWidth, textureHeight);
+    const baseScale = (this._tileSize * 0.9) / maxDimension;
+
+    const appearPortion = 0.25;
+    const startScale = 0.45;
+    const peakScale = 1.08;
+    const endScale = 0.2;
+    const peakRotation = 0.18 * (Math.random() < 0.5 ? -1 : 1);
+    const duration = Math.max(1, this.matchEffects.sparkDuration ?? 1500);
+
+    sprite.scale.set(baseScale * startScale);
+
+    this._matchEffectsLayer.addChild(sprite);
+
+    let finished = false;
+    let cancelTween = null;
+
+    const finish = (fromComplete = false) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      if (!fromComplete) {
+        cancelTween?.();
+      }
+      if (sprite?.parent) {
+        sprite.parent.removeChild(sprite);
+      }
+      sprite?.destroy?.();
+      if (this._activeSparkCleanup === finish) {
+        this._activeSparkCleanup = null;
+      }
+    };
+
+    cancelTween = this.tween({
+      duration,
+      ease: (t) => t,
+      update: (progress) => {
+        if (finished) {
+          return;
+        }
+        if (
+          this.destroyed ||
+          !sprite ||
+          !sprite.parent ||
+          !this._matchEffectsLayer ||
+          this._matchEffectsLayer.destroyed
+        ) {
+          finish();
+          return;
+        }
+
+        let scaleFactor;
+        let rotation;
+        let alpha;
+
+        if (progress < appearPortion) {
+          const local = progress / appearPortion;
+          const eased = Ease.easeOutBack(local);
+          scaleFactor = startScale + (peakScale - startScale) * eased;
+          rotation = peakRotation * eased;
+          alpha = Math.min(1, eased);
+        } else {
+          const local = Math.min(
+            1,
+            Math.max(0, (progress - appearPortion) / (1 - appearPortion))
+          );
+          const eased = 1 - Math.pow(1 - local, 3);
+          scaleFactor = peakScale - (peakScale - endScale) * eased;
+          rotation = peakRotation * (1 - eased);
+          alpha = Math.max(0, 1 - eased);
+        }
+
+        const scaled = baseScale * scaleFactor;
+        sprite.scale.set(scaled, scaled);
+        sprite.rotation = rotation;
+        sprite.alpha = alpha;
+      },
+      complete: () => finish(true),
+    });
+
+    this._activeSparkCleanup = finish;
+  }
+
   #resolveRevealColor({
     paletteSet,
     revealedByPlayer,
@@ -719,8 +834,18 @@ export class Card {
     icon.y = tileSize / 2;
     icon.visible = false;
 
+    const matchEffectsLayer = new Container();
+    matchEffectsLayer.position.set(tileSize / 2, tileSize / 2);
+
     const flipWrap = new Container();
-    flipWrap.addChild(elevationShadow, elevationLip, card, inset, icon);
+    flipWrap.addChild(
+      elevationShadow,
+      elevationLip,
+      card,
+      inset,
+      matchEffectsLayer,
+      icon
+    );
     flipWrap.position.set(tileSize / 2, tileSize / 2);
     flipWrap.pivot.set(tileSize / 2, tileSize / 2);
 
@@ -736,6 +861,7 @@ export class Card {
     this._card = card;
     this._inset = inset;
     this._icon = icon;
+    this._matchEffectsLayer = matchEffectsLayer;
     this._tileSize = tileSize;
     this._tileRadius = radius;
     this._tilePad = pad;

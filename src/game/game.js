@@ -7,6 +7,8 @@ import tileHoverSoundUrl from "../../assets/sounds/TileHover.wav";
 import gameStartSoundUrl from "../../assets/sounds/GameStart.wav";
 import roundWinSoundUrl from "../../assets/sounds/Win.wav";
 import roundLostSoundUrl from "../../assets/sounds/Lost.wav";
+import twoMatchSoundUrl from "../../assets/sounds/2Match.wav";
+import sparkSpriteUrl from "../../assets/sprites/Spark.png";
 
 const CARD_TYPE_TEXTURES = (() => {
   const modules = import.meta.glob(
@@ -55,6 +57,7 @@ const SOUND_ALIASES = {
   gameStart: "mines.gameStart",
   roundWin: "mines.roundWin",
   roundLost: "mines.roundLost",
+  twoMatch: "mines.twoMatch",
 };
 
 function createDummySound() {
@@ -205,6 +208,7 @@ export async function createGame(mount, opts = {}) {
     gameStart: opts.gameStartSoundPath ?? gameStartSoundUrl,
     roundWin: opts.roundWinSoundPath ?? roundWinSoundUrl,
     roundLost: opts.roundLostSoundPath ?? roundLostSoundUrl,
+    twoMatch: opts.twoMatchSoundPath ?? twoMatchSoundUrl,
   };
 
   if (!CARD_TYPE_TEXTURES.length) {
@@ -280,6 +284,8 @@ export async function createGame(mount, opts = {}) {
     })
   );
 
+  const matchSparkTexture = await loadTexture(sparkSpriteUrl);
+
   const scene = new GameScene({
     root,
     backgroundColor,
@@ -292,6 +298,10 @@ export async function createGame(mount, opts = {}) {
       icon: {
         sizePercentage: iconSizePercentage,
         revealedSizeFactor: iconRevealedSizeFactor,
+      },
+      matchEffects: {
+        sparkTexture: matchSparkTexture,
+        sparkDuration: 1500,
       },
       winPopupWidth: winPopupOptions.winPopupWidth,
       winPopupHeight: winPopupOptions.winPopupHeight,
@@ -551,12 +561,21 @@ export async function createGame(mount, opts = {}) {
     } else if (payloadKey != null) {
       let tracked = manualMatchTracker.get(payloadKey);
       if (!tracked) {
-        tracked = new Set();
+        tracked = { cards: new Set(), triggered: false };
         manualMatchTracker.set(payloadKey, tracked);
       }
-      tracked.add(card);
-      if (tracked.size >= 2 && state.revealed < state.totalTiles) {
-        for (const trackedCard of tracked) {
+      tracked.cards.add(card);
+      const eligibleForEffect =
+        tracked.cards.size >= 2 && state.revealed < state.totalTiles;
+      if (eligibleForEffect && !tracked.triggered) {
+        tracked.triggered = true;
+        soundManager.play("twoMatch");
+        for (const trackedCard of tracked.cards) {
+          trackedCard.playMatchSpark?.();
+        }
+      }
+      if (eligibleForEffect) {
+        for (const trackedCard of tracked.cards) {
           if (!manualShakingCards.has(trackedCard)) {
             trackedCard.startMatchShake?.();
             manualShakingCards.add(trackedCard);
