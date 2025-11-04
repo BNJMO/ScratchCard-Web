@@ -57,17 +57,23 @@ export class GameScene {
     this.ui = null;
     this.winPopup = null;
     this.resizeObserver = null;
+    this._windowResizeListener = null;
+    this._currentResolution = 1;
   }
 
   async init() {
     this.app = new Application();
+    const initialResolution = this.#getTargetResolution();
     await this.app.init({
       background: this.backgroundColor,
       width: this.initialSize,
       height: this.initialSize,
       antialias: true,
-      resolution: Math.min(window.devicePixelRatio || 1, 2),
+      resolution: initialResolution,
     });
+
+    this._currentResolution = initialResolution;
+    this.app.renderer.resolution = this._currentResolution;
 
     this.board = new Container();
     this.ui = new Container();
@@ -80,11 +86,16 @@ export class GameScene {
     this.root.appendChild(this.app.canvas);
 
     this.#setupRootSizing();
+    this.#setupWindowResizeListener();
     this.resize();
   }
 
   destroy() {
     this.resizeObserver?.disconnect();
+    if (this._windowResizeListener && typeof window !== "undefined") {
+      window.removeEventListener("resize", this._windowResizeListener);
+    }
+    this._windowResizeListener = null;
     this.cards.forEach((card) => {
       card?.destroy?.();
     });
@@ -146,10 +157,17 @@ export class GameScene {
   resize() {
     if (!this.app) return;
 
+    const resolution = this.#getTargetResolution();
+    if (resolution !== this._currentResolution) {
+      this._currentResolution = resolution;
+      this.app.renderer.resolution = resolution;
+    }
+
     const width = Math.max(1, this.root.clientWidth || this.initialSize);
     const height = Math.max(1, this.root.clientHeight || width);
     const size = Math.floor(Math.min(width, height));
     this.app.renderer.resize(size, size);
+    this.#syncCanvasCssSize(size);
     if (this.cards.length > 0) {
       this.layoutCards();
     }
@@ -202,6 +220,53 @@ export class GameScene {
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.root);
+  }
+
+  #setupWindowResizeListener() {
+    if (this._windowResizeListener && typeof window !== "undefined") {
+      window.removeEventListener("resize", this._windowResizeListener);
+    }
+
+    this._windowResizeListener = () => {
+      this.resize();
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", this._windowResizeListener, {
+        passive: true,
+      });
+    }
+  }
+
+  #syncCanvasCssSize(size) {
+    const canvas = this.app?.canvas;
+    if (!canvas) return;
+
+    const cssSize = `${size}px`;
+    if (canvas.style.width !== cssSize) {
+      canvas.style.width = cssSize;
+    }
+    if (canvas.style.height !== cssSize) {
+      canvas.style.height = cssSize;
+    }
+    if (canvas.style.maxWidth !== "100%") {
+      canvas.style.maxWidth = "100%";
+    }
+    if (canvas.style.maxHeight !== "100%") {
+      canvas.style.maxHeight = "100%";
+    }
+    if (canvas.style.aspectRatio !== "1 / 1") {
+      canvas.style.aspectRatio = "1 / 1";
+    }
+  }
+
+  #getTargetResolution() {
+    if (typeof window === "undefined") {
+      return 1;
+    }
+
+    const deviceRatio = Number(window.devicePixelRatio) || 1;
+    return Math.max(1, Math.min(deviceRatio, 2));
   }
 
   #layoutSizes() {
