@@ -206,7 +206,7 @@ export class GameScene {
 
   #layoutSizes() {
     const size = Math.min(this.app.renderer.width, this.app.renderer.height);
-    const topSpace = 16;
+    const topSpace = 30;
     const boardSpace = Math.max(40, size - topSpace - 5);
     const gapValue = this.layoutOptions?.gapBetweenTiles ?? 0.012;
     const gap = Math.max(1, Math.floor(boardSpace * gapValue));
