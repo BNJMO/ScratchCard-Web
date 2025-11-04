@@ -447,6 +447,7 @@ export async function createGame(mount, opts = {}) {
       card.setDisableAnimations(disableAnimations);
       card._assignedContent = currentAssignments.get(key) ?? null;
       card._pendingWinningReveal = false;
+      card._randomSelectionPending = false;
       clearScheduledAutoReveal(card);
       card.stopMatchShake?.();
     }
@@ -527,6 +528,8 @@ export async function createGame(mount, opts = {}) {
 
   function handleCardRevealComplete(card, payload = {}) {
     if (!card) return;
+
+    card._randomSelectionPending = false;
 
     const assignmentKey = `${card.row},${card.col}`;
     const payloadKey =
@@ -819,7 +822,12 @@ export async function createGame(mount, opts = {}) {
   function selectRandomTile() {
     const pendingSelection = rules.selectedTile;
     const candidates = scene.cards.filter((card) => {
-      if (card.revealed || card._animating || card.destroyed) {
+      if (
+        card.revealed ||
+        card._animating ||
+        card.destroyed ||
+        card._randomSelectionPending
+      ) {
         return false;
       }
       if (
@@ -834,6 +842,7 @@ export async function createGame(mount, opts = {}) {
     if (!candidates.length) return null;
     const card =
       candidates[Math.floor(Math.random() * candidates.length)];
+    card._randomSelectionPending = true;
     handleCardTap(card);
     return { row: card.row, col: card.col };
   }
