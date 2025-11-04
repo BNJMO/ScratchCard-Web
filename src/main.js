@@ -28,6 +28,7 @@ let autoRunActive = false;
 let autoRoundInProgress = false;
 let autoResetTimer = null;
 let autoStopPending = false;
+let autoRemainingBets = 0;
 let manualRoundNeedsReset = false;
 
 const GRID_SIZE = 3;
@@ -423,8 +424,14 @@ function startAutoBetProcess() {
   autoRoundInProgress = false;
   autoStopPending = false;
 
+  const configuredBets = Math.max(
+    0,
+    Math.floor(Number(controlPanel?.getNumberOfBetsValue?.()) || 0)
+  );
+  autoRemainingBets = configuredBets;
+
   if (!demoMode && !suppressRelay) {
-    const payload = { numberOfBets: 0 };
+    const payload = { numberOfBets: configuredBets };
     sendRelayMessage("control:start-autobet", payload);
     sendRelayMessage("action:start-autobet", payload);
   }
@@ -763,9 +770,11 @@ function handleGameStateChange(state) {
 
   if (state?.gameOver) {
     finalizeRound();
-    if (autoRunActive && controlPanelMode === "auto") {
-      autoRoundInProgress = false;
-      scheduleNextAutoBetRound();
+    if (
+      controlPanelMode === "auto" &&
+      (autoRunActive || autoRoundInProgress)
+    ) {
+      handleAutoRoundCompleted();
     }
     return;
   }
@@ -779,6 +788,27 @@ function handleRandomPickClick() {
   }
 
   game?.selectRandomTile?.();
+}
+
+function handleAutoRoundCompleted() {
+  const hadFiniteLimit = autoRemainingBets > 0;
+  if (hadFiniteLimit) {
+    autoRemainingBets = Math.max(0, autoRemainingBets - 1);
+    controlPanel?.setNumberOfBetsValue?.(autoRemainingBets);
+  }
+
+  autoRoundInProgress = false;
+
+  if (!autoRunActive) {
+    return;
+  }
+
+  if (hadFiniteLimit && autoRemainingBets === 0) {
+    stopAutoBetProcess({ reason: "completed", completed: true });
+    return;
+  }
+
+  scheduleNextAutoBetRound();
 }
 
 function handleCardSelected(selection) {
@@ -955,6 +985,12 @@ const opts = {
       });
     });
     controlPanel.addEventListener("numberofbetschange", (event) => {
+      if (!autoRunActive) {
+        autoRemainingBets = Math.max(
+          0,
+          Math.floor(Number(event.detail?.value) || 0)
+        );
+      }
       sendRelayMessage("control:number-of-bets", {
         value: event.detail?.value,
       });
