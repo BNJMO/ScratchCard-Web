@@ -411,11 +411,13 @@ export class Card {
             useSelectionTint,
             fallbackRevealed:
               contentConfig.fallbackPalette?.face?.revealed ??
-              palette.tileBase ??
+              palette.cardFace ??
+              this.palette.cardFace ??
               this.palette.defaultTint,
             fallbackUnrevealed:
               contentConfig.fallbackPalette?.face?.unrevealed ??
-              palette.tileBase ??
+              palette.cardFaceUnrevealed ??
+              this.palette.cardFaceUnrevealed ??
               this.palette.defaultTint,
           });
           this.flipFace(facePalette);
@@ -426,13 +428,13 @@ export class Card {
             useSelectionTint: false,
             fallbackRevealed:
               contentConfig.fallbackPalette?.inset?.revealed ??
-              palette.tileInset ??
-              this.palette.tileInset ??
+              palette.cardInset ??
+              this.palette.cardInset ??
               this.palette.defaultTint,
             fallbackUnrevealed:
               contentConfig.fallbackPalette?.inset?.unrevealed ??
-              palette.tileInset ??
-              this.palette.tileInset ??
+              palette.cardInsetUnrevealed ??
+              this.palette.cardInsetUnrevealed ??
               this.palette.defaultTint,
           });
           this.flipInset(insetPalette);
