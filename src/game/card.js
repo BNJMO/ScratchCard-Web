@@ -707,7 +707,7 @@ export class Card {
     const textureHeight =
       texture?.height ?? texture?.orig?.height ?? texture?.baseTexture?.height ?? 1;
     const maxDimension = Math.max(1, textureWidth, textureHeight);
-    const baseScale = (this._tileSize * 0.9) / maxDimension;
+    const baseScale = (this._tileSize * 1.5) / maxDimension;
 
     const appearPortion = 0.25;
     const startScale = 0.45;
@@ -814,7 +814,7 @@ export class Card {
 
   #createCard(tileSize) {
     const pad = Math.max(6, Math.floor(tileSize * 0.04));
-    const radius = 0;
+    const radius = Math.max(10, Math.floor(tileSize * 0.06));
     const elevationOffset = Math.max(2, Math.floor(tileSize * 0.04));
     const lipOffset = Math.max(4, Math.floor(tileSize * 0.09));
     const shadowBlur = Math.max(10, Math.floor(tileSize * 0.22));
