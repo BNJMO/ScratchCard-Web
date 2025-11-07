@@ -859,6 +859,19 @@ export class Card {
     icon.stop();
     icon.gotoAndStop?.(0);
 
+    const iconMask = new Graphics();
+    iconMask
+      .roundRect(
+        pad,
+        pad,
+        tileSize - pad * 2,
+        tileSize - pad * 2,
+        Math.max(0, radius - pad)
+      )
+      .fill(0xffffff);
+    iconMask.visible = false;
+    icon.mask = iconMask;
+
     const matchEffectsLayer = new Container();
     matchEffectsLayer.position.set(tileSize / 2, tileSize / 2);
 
@@ -869,6 +882,7 @@ export class Card {
       card,
       inset,
       matchEffectsLayer,
+      iconMask,
       icon
     );
     flipWrap.position.set(tileSize / 2, tileSize / 2);
