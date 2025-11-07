@@ -1,4 +1,4 @@
-import { Assets } from "pixi.js";
+import { Assets, Ticker } from "pixi.js";
 import { GameScene } from "./gameScene.js";
 import { GameRules } from "./gameRules.js";
 import { loadCardTypeAnimations } from "./spritesheetProvider.js";
@@ -114,6 +114,138 @@ function sanitizeAnimationFrames(frames) {
   return frames.filter((texture) => Boolean(texture));
 }
 
+const iconAnimationSynchronizer = (() => {
+  const entries = new Map();
+  let tickerHandler = null;
+  let globalElapsed = 0;
+
+  function normalizeSpeed(speed) {
+    if (typeof speed !== "number" || Number.isNaN(speed)) {
+      return DEFAULT_CARD_ANIMATION_SPEED;
+    }
+    return Math.max(0, speed);
+  }
+
+  function syncEntry(entry, { force = false } = {}) {
+    const { icon, textures, speed } = entry;
+    if (!icon || !textures?.length) {
+      return;
+    }
+
+    const frameCount = textures.length;
+    if (frameCount <= 0) {
+      return;
+    }
+
+    const frame = Math.floor((globalElapsed * speed) % frameCount);
+    if (!force && frame === entry.lastFrame) {
+      return;
+    }
+
+    entry.lastFrame = frame;
+    icon.gotoAndStop?.(frame);
+  }
+
+  function normalizeDelta(delta) {
+    if (typeof delta === "number" && Number.isFinite(delta)) {
+      return delta;
+    }
+
+    if (delta && typeof delta.deltaTime === "number") {
+      const { deltaTime } = delta;
+      if (Number.isFinite(deltaTime)) {
+        return deltaTime;
+      }
+    }
+
+    return 0;
+  }
+
+  function update(delta) {
+    if (!entries.size) {
+      return;
+    }
+
+    const deltaTime = normalizeDelta(delta);
+    if (!deltaTime) {
+      return;
+    }
+
+    globalElapsed += deltaTime;
+
+    for (const entry of entries.values()) {
+      syncEntry(entry);
+    }
+  }
+
+  function ensureTicker() {
+    if (tickerHandler) {
+      return;
+    }
+
+    tickerHandler = (delta) => update(delta);
+    Ticker.shared.add(tickerHandler);
+  }
+
+  function detach(icon) {
+    const entry = entries.get(icon);
+    if (!entry) {
+      return;
+    }
+
+    entries.delete(icon);
+
+    if (entry.originalDestroy) {
+      icon.destroy = entry.originalDestroy;
+    }
+
+    if (!entries.size && tickerHandler) {
+      Ticker.shared.remove(tickerHandler);
+      tickerHandler = null;
+    }
+  }
+
+  function attach(icon, textures, animationSpeed) {
+    if (!icon || !Array.isArray(textures) || !textures.length) {
+      return;
+    }
+
+    detach(icon);
+
+    const normalizedSpeed = normalizeSpeed(animationSpeed);
+    const texturesCopy = textures.slice();
+
+    icon.textures = texturesCopy;
+    icon.loop = true;
+    icon.autoUpdate = false;
+    icon.animationSpeed = normalizedSpeed;
+    icon.stop?.();
+    icon.gotoAndStop?.(0);
+
+    const entry = {
+      icon,
+      textures: texturesCopy,
+      speed: normalizedSpeed,
+      lastFrame: Number.NaN,
+      originalDestroy: icon.destroy,
+    };
+
+    icon.destroy = function synchronizedDestroy(...args) {
+      detach(icon);
+      return entry.originalDestroy?.apply(this, args);
+    };
+
+    entries.set(icon, entry);
+    ensureTicker();
+    syncEntry(entry, { force: true });
+  }
+
+  return {
+    attach,
+    detach,
+  };
+})();
+
 function createAnimatedIconConfigurator(
   frames,
   { animationSpeed = DEFAULT_CARD_ANIMATION_SPEED } = {}
@@ -130,20 +262,20 @@ function createAnimatedIconConfigurator(
     if (!icon) return;
 
     if (Array.isArray(icon.textures)) {
-      const nextTextures = textures.slice();
-      icon.textures = nextTextures;
-      icon.loop = true;
-      if (typeof animationSpeed === "number") {
-        icon.animationSpeed = animationSpeed;
+      if (hasAnimation) {
+        iconAnimationSynchronizer.attach(icon, textures, animationSpeed);
+      } else {
+        const nextTextures = textures.slice();
+        iconAnimationSynchronizer.detach(icon);
+        icon.textures = nextTextures;
+        icon.loop = false;
+        icon.autoUpdate = false;
+        icon.animationSpeed = 0;
+        icon.stop?.();
+        icon.gotoAndStop?.(0);
       }
       if (firstTexture) {
         icon.texture = firstTexture;
-      }
-      if (hasAnimation && typeof icon.gotoAndPlay === "function") {
-        icon.gotoAndPlay(0);
-      } else {
-        icon.gotoAndStop?.(0);
-        icon.stop?.();
       }
     } else if (firstTexture) {
       icon.texture = firstTexture;
