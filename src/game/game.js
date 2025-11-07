@@ -35,6 +35,7 @@ const DEFAULT_PALETTE = {
 const WIN_FACE_COLOR = 0xeaff00;
 
 const DEFAULT_CARD_ANIMATION_SPEED = 0.25;
+const MS_PER_60FPS_FRAME = 1000 / 60;
 
 const SOUND_ALIASES = {
   tileHover: "mines.tileHover",
@@ -125,6 +126,27 @@ function createAnimatedIconConfigurator(
 
   const hasAnimation = textures.length > 1;
   const firstTexture = textures[0] ?? null;
+  const resolvedAnimationSpeed =
+    typeof animationSpeed === "number" ? animationSpeed : DEFAULT_CARD_ANIMATION_SPEED;
+  const shouldAnimate = hasAnimation && resolvedAnimationSpeed !== 0;
+
+  const getNow = () =>
+    typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+
+  const animationTimeline = {
+    anchorTime: getNow(),
+  };
+
+  const resolveSynchronizedTime = () => {
+    if (!shouldAnimate || !textures.length) {
+      return 0;
+    }
+
+    const elapsedMs = getNow() - animationTimeline.anchorTime;
+    return (elapsedMs / MS_PER_60FPS_FRAME) * resolvedAnimationSpeed;
+  };
 
   return (icon) => {
     if (!icon) return;
@@ -133,14 +155,36 @@ function createAnimatedIconConfigurator(
       const nextTextures = textures.slice();
       icon.textures = nextTextures;
       icon.loop = true;
-      if (typeof animationSpeed === "number") {
-        icon.animationSpeed = animationSpeed;
+      if (typeof resolvedAnimationSpeed === "number") {
+        icon.animationSpeed = resolvedAnimationSpeed;
       }
       if (firstTexture) {
         icon.texture = firstTexture;
       }
-      if (hasAnimation && typeof icon.gotoAndPlay === "function") {
-        icon.gotoAndPlay(0);
+      if (shouldAnimate) {
+        const timelineTime = resolveSynchronizedTime();
+        const frameIndex =
+          textures.length > 0
+            ? ((Math.floor(timelineTime) % textures.length) + textures.length) % textures.length
+            : 0;
+
+        if (typeof icon.gotoAndStop === "function") {
+          icon.gotoAndStop(frameIndex);
+        } else if ("currentFrame" in icon) {
+          try {
+            icon.currentFrame = frameIndex;
+          } catch (error) {
+            // ignore invalid frame assignments
+          }
+        }
+
+        if (Number.isFinite(timelineTime)) {
+          icon._currentTime = timelineTime;
+        }
+
+        if (typeof icon.play === "function") {
+          icon.play();
+        }
       } else {
         icon.gotoAndStop?.(0);
         icon.stop?.();
