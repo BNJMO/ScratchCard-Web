@@ -1,6 +1,7 @@
 import { Assets } from "pixi.js";
 import { GameScene } from "./gameScene.js";
 import { GameRules } from "./gameRules.js";
+import { loadCardTypeAnimations } from "./spritesheetProvider.js";
 import tileTapDownSoundUrl from "../../assets/sounds/TileTapDown.wav";
 import tileFlipSoundUrl from "../../assets/sounds/TileFlip.wav";
 import tileHoverSoundUrl from "../../assets/sounds/TileHover.wav";
@@ -9,23 +10,6 @@ import roundWinSoundUrl from "../../assets/sounds/Win.wav";
 import roundLostSoundUrl from "../../assets/sounds/Lost.wav";
 import twoMatchSoundUrl from "../../assets/sounds/2Match.wav";
 import sparkSpriteUrl from "../../assets/sprites/Spark.png";
-
-const CARD_TYPE_TEXTURES = (() => {
-  const modules = import.meta.glob(
-    "../../assets/sprites/cardTypes/cardType_*.png",
-    { eager: true }
-  );
-  return Object.entries(modules).map(([path, mod]) => {
-    const match = path.match(/cardType_([^/]+)\.png$/i);
-    const id = match?.[1] ?? path;
-    const texturePath =
-      typeof mod === "string" ? mod : mod?.default ?? mod ?? null;
-    return {
-      key: id,
-      texturePath,
-    };
-  });
-})();
 
 const DEFAULT_PALETTE = {
   appBg: 0x091b26,
@@ -49,6 +33,8 @@ const DEFAULT_PALETTE = {
 };
 
 const WIN_FACE_COLOR = 0xeaff00;
+
+const DEFAULT_CARD_ANIMATION_SPEED = 0.25;
 
 const SOUND_ALIASES = {
   tileHover: "mines.tileHover",
@@ -118,6 +104,50 @@ function createSoundManager(sound, soundEffectPaths) {
       if (!alias || !sound.exists(alias)) return;
       sound.play(alias, options);
     },
+  };
+}
+
+function sanitizeAnimationFrames(frames) {
+  if (!Array.isArray(frames)) {
+    return [];
+  }
+  return frames.filter((texture) => Boolean(texture));
+}
+
+function createAnimatedIconConfigurator(
+  frames,
+  { animationSpeed = DEFAULT_CARD_ANIMATION_SPEED } = {}
+) {
+  const textures = sanitizeAnimationFrames(frames);
+  if (!textures.length) {
+    return null;
+  }
+
+  const hasAnimation = textures.length > 1;
+  const firstTexture = textures[0] ?? null;
+
+  return (icon) => {
+    if (!icon) return;
+
+    if (Array.isArray(icon.textures)) {
+      const nextTextures = textures.slice();
+      icon.textures = nextTextures;
+      icon.loop = true;
+      if (typeof animationSpeed === "number") {
+        icon.animationSpeed = animationSpeed;
+      }
+      if (firstTexture) {
+        icon.texture = firstTexture;
+      }
+      if (hasAnimation && typeof icon.gotoAndPlay === "function") {
+        icon.gotoAndPlay(0);
+      } else {
+        icon.gotoAndStop?.(0);
+        icon.stop?.();
+      }
+    } else if (firstTexture) {
+      icon.texture = firstTexture;
+    }
   };
 }
 
@@ -211,14 +241,27 @@ export async function createGame(mount, opts = {}) {
     twoMatch: opts.twoMatchSoundPath ?? twoMatchSoundUrl,
   };
 
-  if (!CARD_TYPE_TEXTURES.length) {
-    throw new Error("No scratch card textures found under assets/sprites/cardTypes");
+  const cardTypeAnimations = await loadCardTypeAnimations();
+  if (!cardTypeAnimations.length) {
+    throw new Error(
+      "No scratch card textures found under assets/sprites/spritesheets"
+    );
   }
 
-  const defaultContentDefinitions = CARD_TYPE_TEXTURES.reduce(
-    (acc, { key, texturePath }) => {
-      acc[key] = {
-        texturePath,
+  const defaultContentDefinitions = cardTypeAnimations.reduce(
+    (acc, entry, index) => {
+      const key = entry?.key ?? `cardType_${index}`;
+      const sanitizedFrames = sanitizeAnimationFrames(entry?.frames);
+      const primaryTexture = entry?.texture ?? sanitizedFrames[0] ?? null;
+      const configureIcon = createAnimatedIconConfigurator(
+        sanitizedFrames,
+        {
+          animationSpeed: DEFAULT_CARD_ANIMATION_SPEED,
+        }
+      );
+
+      const definition = {
+        texture: primaryTexture,
         palette: {
           face: {
             revealed: palette.cardFace,
@@ -230,6 +273,12 @@ export async function createGame(mount, opts = {}) {
           },
         },
       };
+
+      if (configureIcon) {
+        definition.configureIcon = configureIcon;
+      }
+
+      acc[key] = definition;
       return acc;
     },
     {}

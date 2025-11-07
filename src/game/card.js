@@ -1,4 +1,4 @@
-import { BlurFilter, Container, Graphics, Sprite } from "pixi.js";
+import { AnimatedSprite, BlurFilter, Container, Graphics, Sprite, Texture } from "pixi.js";
 import Ease from "../ease.js";
 
 const AUTO_SELECTION_COLOR = 0xCFDD00;
@@ -381,6 +381,8 @@ export class Card {
 
         if (!this._swapHandled && t >= 0.5) {
           this._swapHandled = true;
+          icon.stop?.();
+          icon.gotoAndStop?.(0);
           icon.visible = true;
           const iconSizeFactor = revealedByPlayer
             ? 1.0
@@ -397,6 +399,9 @@ export class Card {
           icon.height = maxH;
 
           if (contentConfig.texture) {
+            if (Array.isArray(icon.textures)) {
+              icon.textures = [contentConfig.texture];
+            }
             icon.texture = contentConfig.texture;
           }
 
@@ -404,6 +409,19 @@ export class Card {
             card: this,
             revealedByPlayer,
           });
+
+          if (!contentConfig.configureIcon && Array.isArray(icon.textures)) {
+            icon.gotoAndStop?.(0);
+            icon.stop?.();
+          } else if (
+            contentConfig.configureIcon &&
+            Array.isArray(icon.textures) &&
+            icon.textures.length > 1 &&
+            icon.play &&
+            !icon.playing
+          ) {
+            icon.play();
+          }
 
           const facePalette = this.#resolveRevealColor({
             paletteSet: contentConfig.palette?.face,
@@ -554,6 +572,7 @@ export class Card {
     this._bumpToken = null;
     this.#cancelSpawnAnimation();
     this.#stopWinHighlightLoop();
+    this._icon?.stop?.();
     this.container?.destroy?.({ children: true });
     this._wrap = null;
     this._card = null;
@@ -830,11 +849,15 @@ export class Card {
       .roundRect(pad, pad, tileSize - pad * 2, tileSize - pad * 2, Math.max(0, radius - pad))
       .fill(this.palette.tileInset);
 
-    const icon = new Sprite();
+    const icon = new AnimatedSprite([Texture.EMPTY]);
     icon.anchor.set(0.5);
     icon.x = tileSize / 2;
     icon.y = tileSize / 2;
     icon.visible = false;
+    icon.loop = true;
+    icon.animationSpeed = 0.25;
+    icon.stop();
+    icon.gotoAndStop?.(0);
 
     const matchEffectsLayer = new Container();
     matchEffectsLayer.position.set(tileSize / 2, tileSize / 2);
