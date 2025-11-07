@@ -814,7 +814,7 @@ export class Card {
 
   #createCard(tileSize) {
     const pad = Math.max(6, Math.floor(tileSize * 0.04));
-    const radius = Math.max(10, Math.floor(tileSize * 0.16));
+    const radius = 0;
     const elevationOffset = Math.max(2, Math.floor(tileSize * 0.04));
     const lipOffset = Math.max(4, Math.floor(tileSize * 0.09));
     const shadowBlur = Math.max(10, Math.floor(tileSize * 0.22));
