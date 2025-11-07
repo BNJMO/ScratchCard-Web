@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Text } from "pixi.js";
+import { Application, Container, Graphics, Sprite, Text } from "pixi.js";
 import { Card } from "./card.js";
 
 const DEFAULT_FONT_FAMILY = "Inter, system-ui, -apple-system, Segoe UI, Arial";
@@ -14,6 +14,7 @@ export class GameScene {
     strokeWidth,
     cardOptions,
     layoutOptions,
+    gridCoverTexture,
     animationOptions,
     onResize,
   }) {
@@ -33,6 +34,7 @@ export class GameScene {
     this.layoutOptions = {
       gapBetweenTiles: layoutOptions?.gapBetweenTiles ?? 0.012,
     };
+    this.gridCoverTexture = gridCoverTexture ?? null;
     this.animationOptions = {
       hoverEnabled: animationOptions?.hoverEnabled ?? true,
       hoverEnterDuration: animationOptions?.hoverEnterDuration ?? 120,
@@ -54,8 +56,13 @@ export class GameScene {
 
     this.app = null;
     this.board = null;
+    this.boardCardsLayer = null;
+    this.boardCoverLayer = null;
     this.ui = null;
     this.winPopup = null;
+    this.gridCover = null;
+    this._coverFadeTicker = null;
+    this._coverFadeToken = null;
     this.resizeObserver = null;
     this._windowResizeListener = null;
     this._currentResolution = 1;
@@ -76,8 +83,15 @@ export class GameScene {
     this.app.renderer.resolution = this._currentResolution;
 
     this.board = new Container();
+    this.boardCardsLayer = new Container();
+    this.boardCoverLayer = new Container();
+    this.boardCoverLayer.eventMode = "none";
+    this.boardCoverLayer.interactiveChildren = false;
+    this.board.addChild(this.boardCardsLayer, this.boardCoverLayer);
     this.ui = new Container();
     this.app.stage.addChild(this.board, this.ui);
+
+    this.#ensureGridCover();
 
     this.winPopup = this.#createWinPopup();
     this.ui.addChild(this.winPopup.container);
@@ -96,17 +110,23 @@ export class GameScene {
       window.removeEventListener("resize", this._windowResizeListener);
     }
     this._windowResizeListener = null;
+    this.#cancelCoverFade();
     this.cards.forEach((card) => {
       card?.destroy?.();
     });
     this.cards = [];
+    this.boardCardsLayer?.destroy?.({ children: true });
+    this.boardCoverLayer?.destroy?.({ children: true });
+    this.gridCover = null;
+    this.boardCardsLayer = null;
+    this.boardCoverLayer = null;
     this.app?.destroy(true);
     if (this.app?.canvas?.parentNode === this.root) {
       this.root.removeChild(this.app.canvas);
     }
   }
 
-  buildGrid({ interactionFactory }) {
+  buildGrid() {
     this.clearGrid();
     const layout = this.#layoutSizes();
 
@@ -117,21 +137,19 @@ export class GameScene {
           palette: this.palette,
           animationOptions: this.animationOptions,
           iconOptions: this.cardOptions.icon,
-          matchEffects: this.cardOptions.matchEffects,
           row: r,
           col: c,
           tileSize: layout.tileSize,
-          strokeWidth: this.strokeWidth,
           disableAnimations: this.disableAnimations,
-          interactionCallbacks: interactionFactory?.(r, c),
         });
 
         this.cards.push(card);
-        this.board.addChild(card.displayObject);
+        this.boardCardsLayer.addChild(card.displayObject);
       }
     }
 
     this.layoutCards(layout);
+    this.#ensureGridCoverOnTop();
   }
 
   layoutCards(layout = this.#layoutSizes()) {
@@ -152,6 +170,106 @@ export class GameScene {
       this.app.renderer.width / 2,
       this.app.renderer.height / 2
     );
+
+    this.#layoutGridCover(layout);
+  }
+
+  showGridCover() {
+    if (!this.gridCover) return;
+    this.#cancelCoverFade();
+    this.gridCover.visible = true;
+    this.gridCover.alpha = 1;
+  }
+
+  fadeOutGridCover({ duration = 400 } = {}) {
+    if (!this.gridCover) {
+      return;
+    }
+
+    this.#cancelCoverFade();
+
+    if (duration <= 0 || this.disableAnimations) {
+      this.gridCover.alpha = 0;
+      this.gridCover.visible = false;
+      return;
+    }
+
+    const token = Symbol("grid-cover-fade");
+    this._coverFadeToken = token;
+    const cover = this.gridCover;
+    const start = performance.now();
+
+    const tick = () => {
+      const elapsed = (performance.now() - start) / duration;
+      const t = Math.min(1, elapsed);
+      if (this._coverFadeToken !== token) {
+        this.app.ticker.remove(tick);
+        return;
+      }
+      cover.alpha = 1 - t;
+      if (t >= 1) {
+        cover.visible = false;
+        this._coverFadeToken = null;
+        this.app.ticker.remove(tick);
+      }
+    };
+
+    cover.visible = true;
+    cover.alpha = 1;
+    this.app.ticker.add(tick);
+    this._coverFadeTicker = tick;
+  }
+
+  #cancelCoverFade() {
+    if (this._coverFadeTicker) {
+      this.app?.ticker?.remove(this._coverFadeTicker);
+      this._coverFadeTicker = null;
+    }
+    this._coverFadeToken = null;
+  }
+
+  #ensureGridCover() {
+    if (!this.boardCoverLayer || this.gridCover || !this.gridCoverTexture) {
+      return;
+    }
+
+    const cover = new Sprite(this.gridCoverTexture);
+    cover.anchor.set(0.5);
+    cover.visible = false;
+    cover.alpha = 0;
+    cover.eventMode = "none";
+    cover.interactiveChildren = false;
+    this.boardCoverLayer.addChild(cover);
+    this.gridCover = cover;
+  }
+
+  #ensureGridCoverOnTop() {
+    if (!this.boardCoverLayer || !this.gridCover) {
+      return;
+    }
+    if (!this.boardCoverLayer.children.includes(this.gridCover)) {
+      this.boardCoverLayer.addChild(this.gridCover);
+    }
+  }
+
+  #layoutGridCover(layout) {
+    if (!this.gridCover || !layout) {
+      return;
+    }
+
+    const { contentSize } = layout;
+    if (contentSize == null) {
+      return;
+    }
+
+    const texture = this.gridCover.texture;
+    const baseWidth = texture?.width ?? texture?.orig?.width ?? texture?.baseTexture?.width ?? 1;
+    const baseHeight =
+      texture?.height ?? texture?.orig?.height ?? texture?.baseTexture?.height ?? 1;
+    const maxDimension = Math.max(1, baseWidth, baseHeight);
+    const scale = contentSize / maxDimension;
+    this.gridCover.scale.set(scale);
+    this.gridCover.position.set(0, 0);
   }
 
   resize() {
@@ -180,8 +298,9 @@ export class GameScene {
     for (const card of this.cards) {
       card?.destroy?.();
     }
-    this.board?.removeChildren();
+    this.boardCardsLayer?.removeChildren();
     this.cards = [];
+    this.#ensureGridCoverOnTop();
   }
 
   setAnimationsEnabled(enabled) {

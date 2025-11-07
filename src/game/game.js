@@ -9,6 +9,7 @@ import roundWinSoundUrl from "../../assets/sounds/Win.wav";
 import roundLostSoundUrl from "../../assets/sounds/Lost.wav";
 import twoMatchSoundUrl from "../../assets/sounds/2Match.wav";
 import sparkSpriteUrl from "../../assets/sprites/Spark.png";
+import gridCoverSpriteUrl from "../../assets/sprites/GridCover.png";
 
 const CARD_TYPE_TEXTURES = (() => {
   const modules = import.meta.glob(
@@ -285,6 +286,7 @@ export async function createGame(mount, opts = {}) {
   );
 
   const matchSparkTexture = await loadTexture(sparkSpriteUrl);
+  const gridCoverTexture = await loadTexture(gridCoverSpriteUrl);
 
   const scene = new GameScene({
     root,
@@ -307,6 +309,7 @@ export async function createGame(mount, opts = {}) {
       winPopupHeight: winPopupOptions.winPopupHeight,
     },
     layoutOptions: { gapBetweenTiles },
+    gridCoverTexture,
     animationOptions: {
       ...hoverOptions,
       ...wiggleOptions,
@@ -670,6 +673,7 @@ export async function createGame(mount, opts = {}) {
         !excludedCards.has(card)
     );
     if (!unrevealed.length) return;
+    scene.fadeOutGridCover?.({ duration: disableAnimations ? 0 : 400 });
     const ordered = [...unrevealed].sort((a, b) => {
       if (a.row === b.row) {
         return a.col - b.col;
@@ -720,45 +724,7 @@ export async function createGame(mount, opts = {}) {
     enterWaitingState(card);
   }
 
-  function handlePointerOver(card) {
-    if (card.revealed || card._animating || rules.gameOver) return;
-    if (isAutoModeActive(getMode)) return;
-    soundManager.play("tileHover");
-    card.hover(true);
-  }
-
-  function handlePointerOut(card) {
-    if (card.revealed || card._animating) return;
-    card.hover(false);
-    if (card._pressed) {
-      card._pressed = false;
-      card.refreshTint();
-    }
-  }
-
-  function handlePointerDown(card) {
-    if (card.revealed || card._animating || rules.gameOver) return;
-    if (isAutoModeActive(getMode)) return;
-    soundManager.play("tileTapDown");
-    card.setPressed(true);
-  }
-
-  function handlePointerUp(card) {
-    if (card._pressed) {
-      card.setPressed(false);
-    }
-  }
-
-  scene.buildGrid({
-    interactionFactory: () => ({
-      onPointerOver: handlePointerOver,
-      onPointerOut: handlePointerOut,
-      onPointerDown: handlePointerDown,
-      onPointerUp: handlePointerUp,
-      onPointerUpOutside: handlePointerUp,
-      onPointerTap: handleCardTap,
-    }),
-  });
+  scene.buildGrid();
 
   registerCards();
   soundManager.play("gameStart");
@@ -770,16 +736,7 @@ export async function createGame(mount, opts = {}) {
     rules.setAssignments(currentAssignments);
     scene.hideWinPopup();
     scene.clearGrid();
-    scene.buildGrid({
-      interactionFactory: () => ({
-        onPointerOver: handlePointerOver,
-        onPointerOut: handlePointerOut,
-        onPointerDown: handlePointerDown,
-        onPointerUp: handlePointerUp,
-        onPointerUpOutside: handlePointerUp,
-        onPointerTap: handleCardTap,
-      }),
-    });
+    scene.buildGrid();
     registerCards();
     notifyStateChange();
   }
@@ -800,8 +757,12 @@ export async function createGame(mount, opts = {}) {
     }
     rules.setAssignments(currentAssignments);
     for (const [key, card] of cardsByKey.entries()) {
-      card._assignedContent = currentAssignments.get(key) ?? null;
+      const assignedKey = currentAssignments.get(key) ?? null;
+      card._assignedContent = assignedKey;
+      const content = assignedKey != null ? contentLibrary[assignedKey] ?? null : null;
+      card.setContentPreview?.(content);
     }
+    scene.showGridCover?.();
     notifyStateChange();
   }
 
