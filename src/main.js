@@ -1028,7 +1028,18 @@ const opts = {
     controlPanel.addEventListener("bet", handleBetButtonClick);
     controlPanel.addEventListener("randompick", handleRandomPickClick);
     controlPanel.addEventListener("startautobet", handleStartAutobetClick);
-    finalizeRound();
+    setControlPanelBetState(false);
+    setControlPanelRandomState(false);
+    setControlPanelAutoStartState(false);
+    setControlPanelMinesState(false);
+    controlPanel.setModeToggleClickable?.(false);
+    controlPanel.setBetControlsClickable?.(false);
+    controlPanel.setNumberOfBetsClickable?.(false);
+    controlPanel.setAdvancedToggleClickable?.(false);
+    controlPanel.setAdvancedStrategyControlsClickable?.(false);
+    controlPanel.setStopOnProfitClickable?.(false);
+    controlPanel.setStopOnLossClickable?.(false);
+    controlPanel.setAnimationsToggleClickable?.(false);
     controlPanel.setBetAmountDisplay("$0.00");
     setTotalProfitMultiplierValue(0.0);
     controlPanel.setProfitOnWinDisplay("$0.00");
@@ -1037,6 +1048,7 @@ const opts = {
     controlPanel.setDummyServerPanelVisibility(
       serverDummyUI?.isVisible?.() ?? false
     );
+    controlPanel.setShowDummyServerClickable?.(false);
   } catch (err) {
     console.error("Control panel initialization failed:", err);
   }
@@ -1061,6 +1073,14 @@ const opts = {
     if (animationsEnabled != null) {
       game?.setAnimationsEnabled?.(Boolean(animationsEnabled));
     }
+    finalizeRound();
+    controlPanel?.setNumberOfBetsClickable?.(true);
+    controlPanel?.setAdvancedToggleClickable?.(true);
+    controlPanel?.setAdvancedStrategyControlsClickable?.(true);
+    controlPanel?.setStopOnProfitClickable?.(true);
+    controlPanel?.setStopOnLossClickable?.(true);
+    controlPanel?.setAnimationsToggleClickable?.(true);
+    controlPanel?.setShowDummyServerClickable?.(true);
   } catch (e) {
     console.error("Game initialization failed:", e);
     const gameDiv = document.querySelector("#game");
