@@ -65,6 +65,9 @@ export class ControlPanel extends EventTarget {
 
     this.betTooltipTimeout = null;
 
+    this.isDummyServerVisible = false;
+    this.showDummyServerForceDisabled = false;
+
     const totalTilesOption = Number(this.options.totalTiles);
     const normalizedTotalTiles =
       Number.isFinite(totalTilesOption) && totalTilesOption > 0
@@ -1269,9 +1272,39 @@ export class ControlPanel extends EventTarget {
 
   setDummyServerPanelVisibility(isVisible) {
     if (!this.showDummyServerButton) return;
-    const disabled = Boolean(isVisible);
+    this.isDummyServerVisible = Boolean(isVisible);
+    const disabledDueToVisibility = this.isDummyServerVisible;
+    const disabled =
+      disabledDueToVisibility || Boolean(this.showDummyServerForceDisabled);
     this.showDummyServerButton.disabled = disabled;
-    this.showDummyServerButton.classList.toggle("is-disabled", disabled);
+    this.showDummyServerButton.classList.toggle(
+      "is-disabled",
+      disabledDueToVisibility
+    );
+    this.showDummyServerButton.classList.toggle("is-non-clickable", disabled);
+    this.showDummyServerButton.setAttribute("aria-disabled", String(disabled));
+  }
+
+  setAnimationsToggleClickable(isClickable) {
+    if (!this.animationToggleButton) return;
+    const clickable = Boolean(isClickable);
+    this.animationToggleButton.disabled = !clickable;
+    this.animationToggleButton.classList.toggle("is-non-clickable", !clickable);
+  }
+
+  setShowDummyServerClickable(isClickable) {
+    if (!this.showDummyServerButton) return;
+    const clickable = Boolean(isClickable);
+    this.showDummyServerForceDisabled = !clickable;
+    const disabledDueToVisibility = Boolean(this.isDummyServerVisible);
+    const disabled =
+      disabledDueToVisibility || Boolean(this.showDummyServerForceDisabled);
+    this.showDummyServerButton.disabled = disabled;
+    this.showDummyServerButton.classList.toggle(
+      "is-disabled",
+      disabledDueToVisibility
+    );
+    this.showDummyServerButton.classList.toggle("is-non-clickable", disabled);
     this.showDummyServerButton.setAttribute("aria-disabled", String(disabled));
   }
 
