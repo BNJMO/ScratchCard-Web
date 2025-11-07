@@ -869,7 +869,6 @@ export class Card {
         Math.max(0, radius - pad)
       )
       .fill(0xffffff);
-    iconMask.visible = false;
     icon.mask = iconMask;
 
     const matchEffectsLayer = new Container();
