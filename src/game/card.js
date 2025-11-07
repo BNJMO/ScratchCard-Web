@@ -341,12 +341,18 @@ export class Card {
     const card = this._card;
     const inset = this._inset;
     const icon = this._icon;
+    const iconBorder = this._iconBorder;
     const tileSize = this._tileSize;
     const radius = this._tileRadius;
     const pad = this._tilePad;
     const startScaleY = Math.max(1, wrap.scale.y);
     const startSkew = this.getSkew();
     const startTilt = this._tiltDir >= 0 ? +1 : -1;
+
+    if (iconBorder) {
+      iconBorder.clear();
+      iconBorder.visible = false;
+    }
 
     const palette = this.palette;
     const contentConfig = content ?? {};
@@ -421,6 +427,30 @@ export class Card {
             !icon.playing
           ) {
             icon.play();
+          }
+
+          const iconWidth = Math.max(1, Math.abs(icon.width ?? maxW));
+          const iconHeight = Math.max(1, Math.abs(icon.height ?? maxH));
+
+          if (iconBorder && !iconBorder.destroyed) {
+            const borderRadius = Math.min(radius, iconWidth / 2, iconHeight / 2);
+            const strokeColor = this.palette.tileStrokeFlipped ?? this.palette.tileStroke;
+            const strokeWidth = Math.max(1, this.strokeWidth ?? 1);
+            iconBorder
+              .clear()
+              .roundRect(
+                -iconWidth / 2,
+                -iconHeight / 2,
+                iconWidth,
+                iconHeight,
+                borderRadius
+              )
+              .stroke({
+                color: strokeColor,
+                width: strokeWidth,
+                alpha: 0.9,
+              });
+            iconBorder.visible = true;
           }
 
           const facePalette = this.#resolveRevealColor({
@@ -577,6 +607,8 @@ export class Card {
     this._wrap = null;
     this._card = null;
     this._inset = null;
+    this._iconBorder = null;
+    this._iconWrap = null;
     this._icon = null;
     this._matchEffectsLayer = null;
   }
@@ -849,15 +881,23 @@ export class Card {
       .roundRect(pad, pad, tileSize - pad * 2, tileSize - pad * 2, Math.max(0, radius - pad))
       .fill(this.palette.tileInset);
 
+    const iconWrap = new Container();
+    iconWrap.position.set(tileSize / 2, tileSize / 2);
+
+    const iconBorder = new Graphics();
+    iconBorder.visible = false;
+
     const icon = new AnimatedSprite([Texture.EMPTY]);
     icon.anchor.set(0.5);
-    icon.x = tileSize / 2;
-    icon.y = tileSize / 2;
+    icon.x = 0;
+    icon.y = 0;
     icon.visible = false;
     icon.loop = true;
     icon.animationSpeed = 0.25;
     icon.stop();
     icon.gotoAndStop?.(0);
+
+    iconWrap.addChild(iconBorder, icon);
 
     const matchEffectsLayer = new Container();
     matchEffectsLayer.position.set(tileSize / 2, tileSize / 2);
@@ -869,7 +909,7 @@ export class Card {
       card,
       inset,
       matchEffectsLayer,
-      icon
+      iconWrap
     );
     flipWrap.position.set(tileSize / 2, tileSize / 2);
     flipWrap.pivot.set(tileSize / 2, tileSize / 2);
@@ -885,6 +925,8 @@ export class Card {
     this._wrap = flipWrap;
     this._card = card;
     this._inset = inset;
+    this._iconBorder = iconBorder;
+    this._iconWrap = iconWrap;
     this._icon = icon;
     this._matchEffectsLayer = matchEffectsLayer;
     this._tileSize = tileSize;
