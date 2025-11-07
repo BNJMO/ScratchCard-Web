@@ -859,6 +859,22 @@ export class Card {
     icon.stop();
     icon.gotoAndStop?.(0);
 
+    const iconMask = new Graphics({ isMask: true });
+    const iconMaskSize = tileSize - pad * 2;
+    iconMask
+      .roundRect(
+        0,
+        0,
+        iconMaskSize,
+        iconMaskSize,
+        Math.max(0, radius - pad)
+      )
+      .fill(0xffffff);
+    iconMask.position.set(tileSize / 2, tileSize / 2);
+    iconMask.pivot.set(iconMaskSize / 2, iconMaskSize / 2);
+    iconMask.visible = false;
+    icon.mask = iconMask;
+
     const matchEffectsLayer = new Container();
     matchEffectsLayer.position.set(tileSize / 2, tileSize / 2);
 
@@ -869,6 +885,7 @@ export class Card {
       card,
       inset,
       matchEffectsLayer,
+      iconMask,
       icon
     );
     flipWrap.position.set(tileSize / 2, tileSize / 2);
