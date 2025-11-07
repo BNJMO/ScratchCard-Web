@@ -135,6 +135,7 @@ export class GameScene {
         const card = new Card({
           app: this.app,
           palette: this.palette,
+          animationOptions: this.animationOptions,
           iconOptions: this.cardOptions.icon,
           row: r,
           col: c,
