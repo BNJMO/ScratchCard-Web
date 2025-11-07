@@ -146,12 +146,32 @@ const iconAnimationSynchronizer = (() => {
     icon.gotoAndStop?.(frame);
   }
 
+  function normalizeDelta(delta) {
+    if (typeof delta === "number" && Number.isFinite(delta)) {
+      return delta;
+    }
+
+    if (delta && typeof delta.deltaTime === "number") {
+      const { deltaTime } = delta;
+      if (Number.isFinite(deltaTime)) {
+        return deltaTime;
+      }
+    }
+
+    return 0;
+  }
+
   function update(delta) {
     if (!entries.size) {
       return;
     }
 
-    globalElapsed += delta;
+    const deltaTime = normalizeDelta(delta);
+    if (!deltaTime) {
+      return;
+    }
+
+    globalElapsed += deltaTime;
 
     for (const entry of entries.values()) {
       syncEntry(entry);
