@@ -870,7 +870,7 @@ const opts = {
   grid: GRID_SIZE,
   mines: 1,
   autoResetDelayMs: AUTO_RESET_DELAY_MS,
-  iconSizePercentage: 0.7,
+  iconSizePercentage: 0.9,
   iconRevealedSizeOpacity: 0.2,
   iconRevealedSizeFactor: 0.7,
   cardsSpawnDuration: 350,
