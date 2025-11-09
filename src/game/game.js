@@ -595,6 +595,7 @@ export async function createGame(mount, opts = {}) {
       flipDuration,
       flipEaseFunction,
       shouldPlayIconAnimation: isWinningFace,
+      deferIconAnimation: isWinningFace,
       onComplete: (instance, payload) => {
         currentRoundOutcome.pendingReveals = Math.max(
           0,
@@ -741,6 +742,9 @@ export async function createGame(mount, opts = {}) {
         currentRoundOutcome.betResult === "win" &&
         currentRoundOutcome.winningCards.size > 0
       ) {
+        for (const winningCard of currentRoundOutcome.winningCards) {
+          winningCard.playDeferredIconAnimation?.();
+        }
         for (const winningCard of currentRoundOutcome.winningCards) {
           winningCard.highlightWin?.({ faceColor: WIN_FACE_COLOR });
         }

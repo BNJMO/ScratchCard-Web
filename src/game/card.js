@@ -60,6 +60,9 @@ export class Card {
     this._spawnTweenCancel = null;
     this._matchEffectsLayer = null;
     this._activeSparkCleanup = null;
+    this._pendingIconAnimation = false;
+    this._deferredIconConfigurator = null;
+    this._deferredIconRevealedByPlayer = false;
 
     this._tiltDir = 1;
     this._baseX = 0;
@@ -312,7 +315,12 @@ export class Card {
     flipDuration,
     flipEaseFunction,
     shouldPlayIconAnimation = false,
+    deferIconAnimation = false,
   }) {
+    this._pendingIconAnimation = false;
+    this._deferredIconConfigurator = null;
+    this._deferredIconRevealedByPlayer = false;
+
     if (!this._wrap || this.revealed) {
       return false;
     }
@@ -353,7 +361,9 @@ export class Card {
     const contentConfig = content ?? {};
     const contentKey =
       contentConfig.key ?? contentConfig.face ?? contentConfig.type ?? null;
-    const shouldAnimateIcon = Boolean(shouldPlayIconAnimation);
+    const wantsIconAnimation = Boolean(shouldPlayIconAnimation);
+    const shouldDeferIconAnimation = wantsIconAnimation && Boolean(deferIconAnimation);
+    const shouldAnimateIconNow = wantsIconAnimation && !shouldDeferIconAnimation;
 
     this.tween({
       duration: flipDuration,
@@ -410,7 +420,7 @@ export class Card {
           const iconContext = {
             card: this,
             revealedByPlayer,
-            shouldPlayAnimation: shouldAnimateIcon,
+            shouldPlayAnimation: shouldAnimateIconNow,
             animationHandled: false,
           };
 
@@ -419,7 +429,7 @@ export class Card {
           if (!iconContext.animationHandled && Array.isArray(icon.textures)) {
             icon.gotoAndStop?.(0);
             if (
-              shouldAnimateIcon &&
+              shouldAnimateIconNow &&
               icon.textures.length > 1 &&
               typeof icon.play === "function"
             ) {
@@ -427,6 +437,17 @@ export class Card {
             } else {
               icon.stop?.();
             }
+          }
+
+          if (shouldDeferIconAnimation) {
+            this._pendingIconAnimation = true;
+            this._deferredIconConfigurator =
+              typeof contentConfig.configureIcon === "function"
+                ? contentConfig.configureIcon
+                : null;
+            this._deferredIconRevealedByPlayer = revealedByPlayer;
+            icon.stop?.();
+            icon.gotoAndStop?.(0);
           }
 
           const facePalette = this.#resolveRevealColor({
@@ -490,6 +511,44 @@ export class Card {
     });
 
     return true;
+  }
+
+  playDeferredIconAnimation() {
+    if (!this.revealed || !this._pendingIconAnimation) {
+      return;
+    }
+
+    const icon = this._icon;
+    if (!icon) {
+      this._pendingIconAnimation = false;
+      this._deferredIconConfigurator = null;
+      return;
+    }
+
+    icon.gotoAndStop?.(0);
+
+    const context = {
+      card: this,
+      revealedByPlayer: this._deferredIconRevealedByPlayer,
+      shouldPlayAnimation: true,
+      animationHandled: false,
+    };
+
+    if (typeof this._deferredIconConfigurator === "function") {
+      this._deferredIconConfigurator(icon, context);
+    }
+
+    if (!context.animationHandled && Array.isArray(icon.textures)) {
+      if (icon.textures.length > 1 && typeof icon.play === "function") {
+        icon.play();
+      } else {
+        icon.stop?.();
+      }
+    }
+
+    this._pendingIconAnimation = false;
+    this._deferredIconConfigurator = null;
+    this._deferredIconRevealedByPlayer = false;
   }
 
   flipFace(color) {
