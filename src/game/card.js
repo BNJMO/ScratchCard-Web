@@ -60,6 +60,10 @@ export class Card {
     this._spawnTweenCancel = null;
     this._matchEffectsLayer = null;
     this._activeSparkCleanup = null;
+    this._pendingIconAnimation = false;
+    this._deferredIconConfigurator = null;
+    this._deferredIconRevealedByPlayer = false;
+    this._deferredIconStartFromFirstFrame = false;
 
     this._tiltDir = 1;
     this._baseX = 0;
@@ -311,7 +315,14 @@ export class Card {
     onComplete,
     flipDuration,
     flipEaseFunction,
+    shouldPlayIconAnimation = false,
+    deferIconAnimation = false,
   }) {
+    this._pendingIconAnimation = false;
+    this._deferredIconConfigurator = null;
+    this._deferredIconRevealedByPlayer = false;
+    this._deferredIconStartFromFirstFrame = false;
+
     if (!this._wrap || this.revealed) {
       return false;
     }
@@ -352,6 +363,9 @@ export class Card {
     const contentConfig = content ?? {};
     const contentKey =
       contentConfig.key ?? contentConfig.face ?? contentConfig.type ?? null;
+    const wantsIconAnimation = Boolean(shouldPlayIconAnimation);
+    const shouldDeferIconAnimation = wantsIconAnimation && Boolean(deferIconAnimation);
+    const shouldAnimateIconNow = wantsIconAnimation && !shouldDeferIconAnimation;
 
     this.tween({
       duration: flipDuration,
@@ -405,22 +419,38 @@ export class Card {
             icon.texture = contentConfig.texture;
           }
 
-          contentConfig.configureIcon?.(icon, {
+          const iconContext = {
             card: this,
             revealedByPlayer,
-          });
+            shouldPlayAnimation: shouldAnimateIconNow,
+            animationHandled: false,
+          };
 
-          if (!contentConfig.configureIcon && Array.isArray(icon.textures)) {
+          contentConfig.configureIcon?.(icon, iconContext);
+
+          if (!iconContext.animationHandled && Array.isArray(icon.textures)) {
             icon.gotoAndStop?.(0);
+            if (
+              shouldAnimateIconNow &&
+              icon.textures.length > 1 &&
+              typeof icon.play === "function"
+            ) {
+              icon.play();
+            } else {
+              icon.stop?.();
+            }
+          }
+
+          if (shouldDeferIconAnimation) {
+            this._pendingIconAnimation = true;
+            this._deferredIconConfigurator =
+              typeof contentConfig.configureIcon === "function"
+                ? contentConfig.configureIcon
+                : null;
+            this._deferredIconRevealedByPlayer = revealedByPlayer;
+            this._deferredIconStartFromFirstFrame = true;
             icon.stop?.();
-          } else if (
-            contentConfig.configureIcon &&
-            Array.isArray(icon.textures) &&
-            icon.textures.length > 1 &&
-            icon.play &&
-            !icon.playing
-          ) {
-            icon.play();
+            icon.gotoAndStop?.(0);
           }
 
           const facePalette = this.#resolveRevealColor({
@@ -484,6 +514,47 @@ export class Card {
     });
 
     return true;
+  }
+
+  playDeferredIconAnimation() {
+    if (!this.revealed || !this._pendingIconAnimation) {
+      return;
+    }
+
+    const icon = this._icon;
+    if (!icon) {
+      this._pendingIconAnimation = false;
+      this._deferredIconConfigurator = null;
+      this._deferredIconStartFromFirstFrame = false;
+      return;
+    }
+
+    icon.gotoAndStop?.(0);
+
+    const context = {
+      card: this,
+      revealedByPlayer: this._deferredIconRevealedByPlayer,
+      shouldPlayAnimation: true,
+      animationHandled: false,
+      startFromFirstFrame: this._deferredIconStartFromFirstFrame,
+    };
+
+    if (typeof this._deferredIconConfigurator === "function") {
+      this._deferredIconConfigurator(icon, context);
+    }
+
+    if (!context.animationHandled && Array.isArray(icon.textures)) {
+      if (icon.textures.length > 1 && typeof icon.play === "function") {
+        icon.play();
+      } else {
+        icon.stop?.();
+      }
+    }
+
+    this._pendingIconAnimation = false;
+    this._deferredIconConfigurator = null;
+    this._deferredIconRevealedByPlayer = false;
+    this._deferredIconStartFromFirstFrame = false;
   }
 
   flipFace(color) {

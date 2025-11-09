@@ -148,8 +148,11 @@ function createAnimatedIconConfigurator(
     return (elapsedMs / MS_PER_60FPS_FRAME) * resolvedAnimationSpeed;
   };
 
-  return (icon) => {
+  return (icon, context = {}) => {
     if (!icon) return;
+
+    const shouldPlayAnimation = Boolean(context?.shouldPlayAnimation);
+    const startFromFirstFrame = Boolean(context?.startFromFirstFrame);
 
     if (Array.isArray(icon.textures)) {
       const nextTextures = textures.slice();
@@ -161,36 +164,47 @@ function createAnimatedIconConfigurator(
       if (firstTexture) {
         icon.texture = firstTexture;
       }
-      if (shouldAnimate) {
-        const timelineTime = resolveSynchronizedTime();
-        const frameIndex =
-          textures.length > 0
-            ? ((Math.floor(timelineTime) % textures.length) + textures.length) % textures.length
-            : 0;
+      const canAnimate = shouldAnimate && shouldPlayAnimation;
+      const timelineTime = canAnimate && !startFromFirstFrame
+        ? resolveSynchronizedTime()
+        : 0;
+      let frameIndex = 0;
+      if (canAnimate && textures.length > 0 && !startFromFirstFrame) {
+        frameIndex = ((Math.floor(timelineTime) % textures.length) + textures.length) % textures.length;
+      }
 
-        if (typeof icon.gotoAndStop === "function") {
-          icon.gotoAndStop(frameIndex);
-        } else if ("currentFrame" in icon) {
-          try {
-            icon.currentFrame = frameIndex;
-          } catch (error) {
-            // ignore invalid frame assignments
-          }
+      if (typeof icon.gotoAndStop === "function") {
+        icon.gotoAndStop(frameIndex);
+      } else if ("currentFrame" in icon) {
+        try {
+          icon.currentFrame = frameIndex;
+        } catch (error) {
+          // ignore invalid frame assignments
         }
+      }
 
-        if (Number.isFinite(timelineTime)) {
+      if (canAnimate) {
+        if (startFromFirstFrame) {
+          icon._currentTime = 0;
+        } else if (Number.isFinite(timelineTime)) {
           icon._currentTime = timelineTime;
         }
+      }
 
-        if (typeof icon.play === "function") {
-          icon.play();
-        }
+      if (canAnimate && typeof icon.play === "function") {
+        icon.play();
       } else {
-        icon.gotoAndStop?.(0);
         icon.stop?.();
+      }
+
+      if (context && typeof context === "object") {
+        context.animationHandled = true;
       }
     } else if (firstTexture) {
       icon.texture = firstTexture;
+      if (context && typeof context === "object") {
+        context.animationHandled = true;
+      }
     }
   };
 }
@@ -587,6 +601,8 @@ export async function createGame(mount, opts = {}) {
       iconRevealedSizeFactor: iconRevealFactor,
       flipDuration,
       flipEaseFunction,
+      shouldPlayIconAnimation: isWinningFace,
+      deferIconAnimation: isWinningFace,
       onComplete: (instance, payload) => {
         currentRoundOutcome.pendingReveals = Math.max(
           0,
@@ -733,6 +749,9 @@ export async function createGame(mount, opts = {}) {
         currentRoundOutcome.betResult === "win" &&
         currentRoundOutcome.winningCards.size > 0
       ) {
+        for (const winningCard of currentRoundOutcome.winningCards) {
+          winningCard.playDeferredIconAnimation?.();
+        }
         for (const winningCard of currentRoundOutcome.winningCards) {
           winningCard.highlightWin?.({ faceColor: WIN_FACE_COLOR });
         }
