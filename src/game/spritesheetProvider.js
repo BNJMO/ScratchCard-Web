@@ -7,7 +7,7 @@ const SPRITESHEET_CELL_HEIGHT = 166;
 const SPRITESHEET_HORIZONTAL_GAP = 4;
 const SPRITESHEET_VERTICAL_GAP = 8;
 // Scales the hardcoded cell metrics so higher-resolution spritesheets can be used.
-const SPRITESHEET_RESOLUTION_FACTOR = 1;
+const SPRITESHEET_RESOLUTION_FACTOR = 0.75;
 const CARD_TYPE_COUNT = SPRITESHEET_COLUMNS * SPRITESHEET_ROWS;
 
 const SPRITESHEET_MODULES = import.meta.glob(
