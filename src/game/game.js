@@ -152,6 +152,7 @@ function createAnimatedIconConfigurator(
     if (!icon) return;
 
     const shouldPlayAnimation = Boolean(context?.shouldPlayAnimation);
+    const startFromFirstFrame = Boolean(context?.startFromFirstFrame);
 
     if (Array.isArray(icon.textures)) {
       const nextTextures = textures.slice();
@@ -164,9 +165,11 @@ function createAnimatedIconConfigurator(
         icon.texture = firstTexture;
       }
       const canAnimate = shouldAnimate && shouldPlayAnimation;
-      const timelineTime = canAnimate ? resolveSynchronizedTime() : 0;
+      const timelineTime = canAnimate && !startFromFirstFrame
+        ? resolveSynchronizedTime()
+        : 0;
       let frameIndex = 0;
-      if (canAnimate && textures.length > 0) {
+      if (canAnimate && textures.length > 0 && !startFromFirstFrame) {
         frameIndex = ((Math.floor(timelineTime) % textures.length) + textures.length) % textures.length;
       }
 
@@ -180,8 +183,12 @@ function createAnimatedIconConfigurator(
         }
       }
 
-      if (canAnimate && Number.isFinite(timelineTime)) {
-        icon._currentTime = timelineTime;
+      if (canAnimate) {
+        if (startFromFirstFrame) {
+          icon._currentTime = 0;
+        } else if (Number.isFinite(timelineTime)) {
+          icon._currentTime = timelineTime;
+        }
       }
 
       if (canAnimate && typeof icon.play === "function") {

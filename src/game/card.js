@@ -63,6 +63,7 @@ export class Card {
     this._pendingIconAnimation = false;
     this._deferredIconConfigurator = null;
     this._deferredIconRevealedByPlayer = false;
+    this._deferredIconStartFromFirstFrame = false;
 
     this._tiltDir = 1;
     this._baseX = 0;
@@ -320,6 +321,7 @@ export class Card {
     this._pendingIconAnimation = false;
     this._deferredIconConfigurator = null;
     this._deferredIconRevealedByPlayer = false;
+    this._deferredIconStartFromFirstFrame = false;
 
     if (!this._wrap || this.revealed) {
       return false;
@@ -446,6 +448,7 @@ export class Card {
                 ? contentConfig.configureIcon
                 : null;
             this._deferredIconRevealedByPlayer = revealedByPlayer;
+            this._deferredIconStartFromFirstFrame = true;
             icon.stop?.();
             icon.gotoAndStop?.(0);
           }
@@ -522,6 +525,7 @@ export class Card {
     if (!icon) {
       this._pendingIconAnimation = false;
       this._deferredIconConfigurator = null;
+      this._deferredIconStartFromFirstFrame = false;
       return;
     }
 
@@ -532,6 +536,7 @@ export class Card {
       revealedByPlayer: this._deferredIconRevealedByPlayer,
       shouldPlayAnimation: true,
       animationHandled: false,
+      startFromFirstFrame: this._deferredIconStartFromFirstFrame,
     };
 
     if (typeof this._deferredIconConfigurator === "function") {
@@ -549,6 +554,7 @@ export class Card {
     this._pendingIconAnimation = false;
     this._deferredIconConfigurator = null;
     this._deferredIconRevealedByPlayer = false;
+    this._deferredIconStartFromFirstFrame = false;
   }
 
   flipFace(color) {
