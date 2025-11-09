@@ -285,7 +285,9 @@ export async function createGame(mount, opts = {}) {
     twoMatch: opts.twoMatchSoundPath ?? twoMatchSoundUrl,
   };
 
-  const cardTypeAnimations = await loadCardTypeAnimations();
+  const cardTypeAnimations = await loadCardTypeAnimations({
+    resolutionFactor: opts.spritesheetResolutionFactor,
+  });
   if (!cardTypeAnimations.length) {
     throw new Error(
       "No scratch card textures found under assets/sprites/spritesheets"

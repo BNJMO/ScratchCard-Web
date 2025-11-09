@@ -2,11 +2,12 @@ import { Assets, Rectangle, Texture } from "pixi.js";
 
 const SPRITESHEET_COLUMNS = 3;
 const SPRITESHEET_ROWS = 4;
-const SPRITESHEET_CELL_WIDTH = 152;
-const SPRITESHEET_CELL_HEIGHT = 166;
-const SPRITESHEET_HORIZONTAL_GAP = 4;
-const SPRITESHEET_VERTICAL_GAP = 8;
+const SPRITESHEET_CELL_WIDTH_BASE = 152;
+const SPRITESHEET_CELL_HEIGHT_BASE = 166;
+const SPRITESHEET_HORIZONTAL_GAP_BASE = 4;
+const SPRITESHEET_VERTICAL_GAP_BASE = 8;
 const CARD_TYPE_COUNT = SPRITESHEET_COLUMNS * SPRITESHEET_ROWS;
+const DEFAULT_RESOLUTION_FACTOR = 1;
 
 const SPRITESHEET_MODULES = import.meta.glob(
   "../../assets/sprites/spritesheets/*.png",
@@ -36,25 +37,69 @@ const SPRITESHEET_ENTRIES = Object.entries(SPRITESHEET_MODULES)
     return a.path.localeCompare(b.path);
   });
 
-let cachedAnimations = null;
-let loadingPromise = null;
+const cachedAnimations = new Map();
+const loadingPromises = new Map();
 // Retain references to the loaded spritesheet textures so that the
 // underlying base textures remain alive while frame textures are in use.
 let retainedSpritesheets = [];
 
-function sliceSpritesheet(baseTexture) {
+function resolveResolutionFactor(factor) {
+  const numericFactor = Number(factor);
+  if (!Number.isFinite(numericFactor) || numericFactor <= 0) {
+    return DEFAULT_RESOLUTION_FACTOR;
+  }
+  return numericFactor;
+}
+
+function createSpritesheetMetrics(resolutionFactor = DEFAULT_RESOLUTION_FACTOR) {
+  const factor = resolveResolutionFactor(resolutionFactor);
+  const scale = (value, minimum) =>
+    Math.max(minimum, Math.round(value * factor));
+
+  return {
+    factor,
+    columns: SPRITESHEET_COLUMNS,
+    rows: SPRITESHEET_ROWS,
+    cellWidth: scale(SPRITESHEET_CELL_WIDTH_BASE, 1),
+    cellHeight: scale(SPRITESHEET_CELL_HEIGHT_BASE, 1),
+    horizontalGap: scale(SPRITESHEET_HORIZONTAL_GAP_BASE, 0),
+    verticalGap: scale(SPRITESHEET_VERTICAL_GAP_BASE, 0),
+  };
+}
+
+function getMetricsCacheKey(metrics) {
+  return [
+    metrics.factor,
+    metrics.columns,
+    metrics.rows,
+    metrics.cellWidth,
+    metrics.cellHeight,
+    metrics.horizontalGap,
+    metrics.verticalGap,
+  ].join("x");
+}
+
+function sliceSpritesheet(baseTexture, metrics) {
   const frames = [];
   const width = baseTexture?.width ?? 0;
   const height = baseTexture?.height ?? 0;
+  const {
+    columns,
+    rows,
+    cellWidth,
+    cellHeight,
+    horizontalGap,
+    verticalGap,
+  } = metrics;
 
-  for (let row = 0; row < SPRITESHEET_ROWS; row += 1) {
-    for (let col = 0; col < SPRITESHEET_COLUMNS; col += 1) {
-      const frameX = col * SPRITESHEET_CELL_WIDTH + col * SPRITESHEET_HORIZONTAL_GAP;
-      const frameY = row * SPRITESHEET_CELL_HEIGHT + row * SPRITESHEET_VERTICAL_GAP;
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < columns; col += 1) {
+      const frameX = col * cellWidth + col * horizontalGap;
+      const frameY = row * cellHeight + row * verticalGap;
 
       if (
-        frameX + SPRITESHEET_CELL_WIDTH > width ||
-        frameY + SPRITESHEET_CELL_HEIGHT > height
+        frameX + cellWidth > width ||
+        frameY + cellHeight > height
       ) {
         frames.push(null);
         continue;
@@ -63,8 +108,8 @@ function sliceSpritesheet(baseTexture) {
       const frame = new Rectangle(
         frameX,
         frameY,
-        SPRITESHEET_CELL_WIDTH,
-        SPRITESHEET_CELL_HEIGHT
+        cellWidth,
+        cellHeight
       );
       frames.push(
         new Texture({
@@ -88,7 +133,7 @@ async function loadTexture(path) {
   }
 }
 
-async function buildAnimations() {
+async function buildAnimations(metrics) {
   const buckets = Array.from({ length: CARD_TYPE_COUNT }, () => []);
   const loadedSheets = [];
 
@@ -101,7 +146,7 @@ async function buildAnimations() {
     if (!baseTexture) {
       continue;
     }
-    const frames = sliceSpritesheet(baseTexture);
+    const frames = sliceSpritesheet(baseTexture, metrics);
 
     frames.forEach((frameTexture, index) => {
       if (!frameTexture) {
@@ -125,26 +170,34 @@ async function buildAnimations() {
   }));
 }
 
-export async function loadCardTypeAnimations() {
-  if (cachedAnimations) {
-    return cachedAnimations;
-  }
-  if (loadingPromise) {
-    return loadingPromise;
+export async function loadCardTypeAnimations({
+  resolutionFactor = DEFAULT_RESOLUTION_FACTOR,
+} = {}) {
+  const metrics = createSpritesheetMetrics(resolutionFactor);
+  const cacheKey = getMetricsCacheKey(metrics);
+
+  if (cachedAnimations.has(cacheKey)) {
+    return cachedAnimations.get(cacheKey);
   }
 
-  loadingPromise = buildAnimations()
+  if (loadingPromises.has(cacheKey)) {
+    return loadingPromises.get(cacheKey);
+  }
+
+  const loadingPromise = buildAnimations(metrics)
     .then((animations) => {
-      cachedAnimations = animations;
-      loadingPromise = null;
-      return cachedAnimations;
+      cachedAnimations.set(cacheKey, animations);
+      loadingPromises.delete(cacheKey);
+      return animations;
     })
     .catch((error) => {
       console.error("Failed to build card type animations", error);
-      loadingPromise = null;
-      cachedAnimations = [];
-      return cachedAnimations;
+      loadingPromises.delete(cacheKey);
+      cachedAnimations.set(cacheKey, []);
+      return [];
     });
+
+  loadingPromises.set(cacheKey, loadingPromise);
 
   return loadingPromise;
 }
