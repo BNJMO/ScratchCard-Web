@@ -148,8 +148,10 @@ function createAnimatedIconConfigurator(
     return (elapsedMs / MS_PER_60FPS_FRAME) * resolvedAnimationSpeed;
   };
 
-  return (icon) => {
+  return (icon, context = {}) => {
     if (!icon) return;
+
+    const shouldPlayAnimation = Boolean(context?.shouldPlayAnimation);
 
     if (Array.isArray(icon.textures)) {
       const nextTextures = textures.slice();
@@ -161,36 +163,41 @@ function createAnimatedIconConfigurator(
       if (firstTexture) {
         icon.texture = firstTexture;
       }
-      if (shouldAnimate) {
-        const timelineTime = resolveSynchronizedTime();
-        const frameIndex =
-          textures.length > 0
-            ? ((Math.floor(timelineTime) % textures.length) + textures.length) % textures.length
-            : 0;
+      const canAnimate = shouldAnimate && shouldPlayAnimation;
+      const timelineTime = canAnimate ? resolveSynchronizedTime() : 0;
+      let frameIndex = 0;
+      if (canAnimate && textures.length > 0) {
+        frameIndex = ((Math.floor(timelineTime) % textures.length) + textures.length) % textures.length;
+      }
 
-        if (typeof icon.gotoAndStop === "function") {
-          icon.gotoAndStop(frameIndex);
-        } else if ("currentFrame" in icon) {
-          try {
-            icon.currentFrame = frameIndex;
-          } catch (error) {
-            // ignore invalid frame assignments
-          }
+      if (typeof icon.gotoAndStop === "function") {
+        icon.gotoAndStop(frameIndex);
+      } else if ("currentFrame" in icon) {
+        try {
+          icon.currentFrame = frameIndex;
+        } catch (error) {
+          // ignore invalid frame assignments
         }
+      }
 
-        if (Number.isFinite(timelineTime)) {
-          icon._currentTime = timelineTime;
-        }
+      if (canAnimate && Number.isFinite(timelineTime)) {
+        icon._currentTime = timelineTime;
+      }
 
-        if (typeof icon.play === "function") {
-          icon.play();
-        }
+      if (canAnimate && typeof icon.play === "function") {
+        icon.play();
       } else {
-        icon.gotoAndStop?.(0);
         icon.stop?.();
+      }
+
+      if (context && typeof context === "object") {
+        context.animationHandled = true;
       }
     } else if (firstTexture) {
       icon.texture = firstTexture;
+      if (context && typeof context === "object") {
+        context.animationHandled = true;
+      }
     }
   };
 }
@@ -587,6 +594,7 @@ export async function createGame(mount, opts = {}) {
       iconRevealedSizeFactor: iconRevealFactor,
       flipDuration,
       flipEaseFunction,
+      shouldPlayIconAnimation: isWinningFace,
       onComplete: (instance, payload) => {
         currentRoundOutcome.pendingReveals = Math.max(
           0,

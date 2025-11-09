@@ -311,6 +311,7 @@ export class Card {
     onComplete,
     flipDuration,
     flipEaseFunction,
+    shouldPlayIconAnimation = false,
   }) {
     if (!this._wrap || this.revealed) {
       return false;
@@ -352,6 +353,7 @@ export class Card {
     const contentConfig = content ?? {};
     const contentKey =
       contentConfig.key ?? contentConfig.face ?? contentConfig.type ?? null;
+    const shouldAnimateIcon = Boolean(shouldPlayIconAnimation);
 
     this.tween({
       duration: flipDuration,
@@ -405,22 +407,26 @@ export class Card {
             icon.texture = contentConfig.texture;
           }
 
-          contentConfig.configureIcon?.(icon, {
+          const iconContext = {
             card: this,
             revealedByPlayer,
-          });
+            shouldPlayAnimation: shouldAnimateIcon,
+            animationHandled: false,
+          };
 
-          if (!contentConfig.configureIcon && Array.isArray(icon.textures)) {
+          contentConfig.configureIcon?.(icon, iconContext);
+
+          if (!iconContext.animationHandled && Array.isArray(icon.textures)) {
             icon.gotoAndStop?.(0);
-            icon.stop?.();
-          } else if (
-            contentConfig.configureIcon &&
-            Array.isArray(icon.textures) &&
-            icon.textures.length > 1 &&
-            icon.play &&
-            !icon.playing
-          ) {
-            icon.play();
+            if (
+              shouldAnimateIcon &&
+              icon.textures.length > 1 &&
+              typeof icon.play === "function"
+            ) {
+              icon.play();
+            } else {
+              icon.stop?.();
+            }
           }
 
           const facePalette = this.#resolveRevealColor({
