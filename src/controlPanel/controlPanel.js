@@ -38,6 +38,7 @@ export class ControlPanel extends EventTarget {
       minesLabel: options.minesLabel ?? "Mines",
       gemsLabel: options.gemsLabel ?? "Gems",
       animationsLabel: options.animationsLabel ?? "Animations",
+      themeLabel: options.themeLabel ?? "Theme",
       showDummyServerLabel:
         options.showDummyServerLabel ?? "Show Dummy Server",
       initialAnimationsEnabled:
@@ -60,6 +61,11 @@ export class ControlPanel extends EventTarget {
     this.minesSelectState = "clickable";
     this.autoStartButtonState = "clickable";
     this.autoStartButtonMode = "start";
+
+    this.themeOptions = [];
+    this.currentThemeId = null;
+    this.themeSelect = null;
+    this.themeSelectWrapper = null;
 
     this.totalProfitMultiplier = 1;
 
@@ -809,6 +815,30 @@ export class ControlPanel extends EventTarget {
     );
     this.animationToggleWrapper.appendChild(this.animationToggleButton);
 
+    this.themeSelectWrapper = document.createElement("label");
+    this.themeSelectWrapper.className = "control-theme-select";
+    this.footerActions.appendChild(this.themeSelectWrapper);
+
+    const themeLabel = document.createElement("span");
+    themeLabel.className = "control-theme-label";
+    themeLabel.textContent = this.options.themeLabel;
+    this.themeSelectWrapper.appendChild(themeLabel);
+
+    this.themeSelect = document.createElement("select");
+    this.themeSelect.className = "control-theme-dropdown";
+    this.themeSelect.setAttribute(
+      "aria-label",
+      `${this.options.themeLabel} selection`
+    );
+    this.themeSelect.addEventListener("change", () => {
+      if (this.themeSelect.disabled) {
+        return;
+      }
+      this.setThemeValue(this.themeSelect.value);
+    });
+    this.themeSelectWrapper.appendChild(this.themeSelect);
+    this.updateThemeSelectVisibility();
+
     this.showDummyServerButton = document.createElement("button");
     this.showDummyServerButton.type = "button";
     this.showDummyServerButton.className = "control-show-dummy-server";
@@ -1231,6 +1261,116 @@ export class ControlPanel extends EventTarget {
     if (this.gameName) {
       this.gameName.textContent = name;
     }
+  }
+
+  updateThemeSelectVisibility() {
+    if (!this.themeSelectWrapper) return;
+    const hidden = this.themeOptions.length === 0;
+    this.themeSelectWrapper.hidden = hidden;
+    if (hidden) {
+      this.themeSelectWrapper.setAttribute("aria-hidden", "true");
+    } else {
+      this.themeSelectWrapper.removeAttribute("aria-hidden");
+    }
+  }
+
+  setThemeOptions(options = [], { emit = false } = {}) {
+    const normalized = Array.isArray(options)
+      ? options.filter((id) => typeof id === "string" && id)
+      : [];
+    this.themeOptions = normalized;
+    if (!this.themeSelect) {
+      this.currentThemeId = this.themeOptions.includes(this.currentThemeId)
+        ? this.currentThemeId
+        : this.themeOptions[0] ?? null;
+      return;
+    }
+
+    this.themeSelect.innerHTML = "";
+    for (const id of this.themeOptions) {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = id.replace(/_/g, " ");
+      this.themeSelect.appendChild(option);
+    }
+
+    if (
+      this.currentThemeId &&
+      this.themeOptions.includes(this.currentThemeId)
+    ) {
+      this.themeSelect.value = this.currentThemeId;
+    } else if (this.themeOptions.length > 0) {
+      this.currentThemeId = this.themeOptions[0];
+      this.themeSelect.value = this.currentThemeId;
+    } else {
+      this.currentThemeId = null;
+      this.themeSelect.value = "";
+      this.themeSelect.selectedIndex = -1;
+    }
+
+    this.updateThemeSelectVisibility();
+
+    if (emit && this.currentThemeId) {
+      this.dispatchThemeChange();
+    }
+  }
+
+  setThemeValue(themeId, { emit = true } = {}) {
+    const normalized =
+      typeof themeId === "string" && themeId ? themeId : null;
+    if (!this.themeSelect) {
+      this.currentThemeId = normalized;
+      return;
+    }
+
+    let targetValue = normalized;
+    if (targetValue && !this.themeOptions.includes(targetValue)) {
+      targetValue = this.themeOptions.length > 0 ? this.themeOptions[0] : null;
+    }
+
+    if (!targetValue) {
+      const hadTheme = this.currentThemeId != null;
+      this.currentThemeId = null;
+      this.themeSelect.value = "";
+      this.themeSelect.selectedIndex = -1;
+      this.updateThemeSelectVisibility();
+      if (emit && hadTheme) {
+        this.dispatchThemeChange();
+      }
+      return;
+    }
+
+    if (this.themeSelect.value !== targetValue) {
+      this.themeSelect.value = targetValue;
+    }
+
+    if (this.currentThemeId === targetValue) {
+      return;
+    }
+
+    this.currentThemeId = targetValue;
+    if (emit) {
+      this.dispatchThemeChange();
+    }
+  }
+
+  setThemeSelectClickable(isClickable) {
+    if (!this.themeSelect) return;
+    const disabled = !isClickable || this.themeOptions.length === 0;
+    this.themeSelect.disabled = disabled;
+    this.themeSelect.setAttribute("aria-disabled", String(disabled));
+    this.themeSelectWrapper?.classList.toggle("is-disabled", disabled);
+  }
+
+  dispatchThemeChange() {
+    if (!this.currentThemeId) {
+      return;
+    }
+    this.dispatchEvent(
+      new CustomEvent("themechange", {
+        detail: { id: this.currentThemeId },
+      })
+    );
   }
 
   setAnimationsEnabled(value, { emit = true } = {}) {

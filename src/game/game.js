@@ -1,7 +1,10 @@
 import { Assets } from "pixi.js";
 import { GameScene } from "./gameScene.js";
 import { GameRules } from "./gameRules.js";
-import { loadCardTypeAnimations } from "./spritesheetProvider.js";
+import {
+  getDefaultThemeId,
+  loadCardTypeAnimations,
+} from "./spritesheetProvider.js";
 import tileTapDownSoundUrl from "../../assets/sounds/TileTapDown.wav";
 import tileFlipSoundUrl from "../../assets/sounds/TileFlip.wav";
 import tileHoverSoundUrl from "../../assets/sounds/TileHover.wav";
@@ -299,97 +302,119 @@ export async function createGame(mount, opts = {}) {
     twoMatch: opts.twoMatchSoundPath ?? twoMatchSoundUrl,
   };
 
-  const cardTypeAnimations = await loadCardTypeAnimations();
-  if (!cardTypeAnimations.length) {
-    throw new Error(
-      "No scratch card textures found under assets/sprites/spritesheets"
-    );
-  }
-
-  const defaultContentDefinitions = cardTypeAnimations.reduce(
-    (acc, entry, index) => {
-      const key = entry?.key ?? `cardType_${index}`;
-      const sanitizedFrames = sanitizeAnimationFrames(entry?.frames);
-      const primaryTexture = entry?.texture ?? sanitizedFrames[0] ?? null;
-      const configureIcon = createAnimatedIconConfigurator(
-        sanitizedFrames,
-        {
-          animationSpeed: DEFAULT_CARD_ANIMATION_SPEED,
-        }
-      );
-
-      const definition = {
-        texture: primaryTexture,
-        palette: {
-          face: {
-            revealed: palette.cardFace,
-            unrevealed: palette.cardFaceUnrevealed,
-          },
-          inset: {
-            revealed: palette.cardInset,
-            unrevealed: palette.cardInsetUnrevealed,
-          },
-        },
-      };
-
-      if (configureIcon) {
-        definition.configureIcon = configureIcon;
-      }
-
-      acc[key] = definition;
-      return acc;
-    },
-    {}
-  );
-
   const userContentDefinitions = opts.contentDefinitions ?? {};
-  const mergedContentDefinitions = {};
-  const contentKeys = new Set([
-    ...Object.keys(defaultContentDefinitions),
-    ...Object.keys(userContentDefinitions),
-  ]);
+  let contentLibrary = {};
+  let availableContentKeys = [];
+  let currentThemeId = null;
 
-  for (const key of contentKeys) {
-    const merged = {
-      ...(defaultContentDefinitions[key] ?? {}),
-      ...(userContentDefinitions[key] ?? {}),
-    };
-    mergedContentDefinitions[key] = merged;
-    if (merged.revealSoundPath && merged.revealSoundKey) {
-      soundEffectPaths[merged.revealSoundKey] = merged.revealSoundPath;
+  async function buildContentLibrary(themeId, { updateSounds = false } = {}) {
+    const resolvedThemeId =
+      themeId ?? currentThemeId ?? getDefaultThemeId();
+    if (!resolvedThemeId) {
+      throw new Error(
+        "No scratch card themes found under assets/sprites/spritesheets_*"
+      );
     }
+
+    const cardTypeAnimations = await loadCardTypeAnimations(resolvedThemeId);
+    if (!cardTypeAnimations.length) {
+      throw new Error(
+        `No scratch card textures found for theme '${resolvedThemeId}'`
+      );
+    }
+
+    const defaultContentDefinitions = cardTypeAnimations.reduce(
+      (acc, entry, index) => {
+        const key = entry?.key ?? `cardType_${index}`;
+        const sanitizedFrames = sanitizeAnimationFrames(entry?.frames);
+        const primaryTexture = entry?.texture ?? sanitizedFrames[0] ?? null;
+        const configureIcon = createAnimatedIconConfigurator(
+          sanitizedFrames,
+          {
+            animationSpeed: DEFAULT_CARD_ANIMATION_SPEED,
+          }
+        );
+
+        const definition = {
+          texture: primaryTexture,
+          palette: {
+            face: {
+              revealed: palette.cardFace,
+              unrevealed: palette.cardFaceUnrevealed,
+            },
+            inset: {
+              revealed: palette.cardInset,
+              unrevealed: palette.cardInsetUnrevealed,
+            },
+          },
+        };
+
+        if (configureIcon) {
+          definition.configureIcon = configureIcon;
+        }
+
+        acc[key] = definition;
+        return acc;
+      },
+      {}
+    );
+
+    const mergedContentDefinitions = {};
+    const definitionKeys = new Set([
+      ...Object.keys(defaultContentDefinitions),
+      ...Object.keys(userContentDefinitions),
+    ]);
+
+    for (const key of definitionKeys) {
+      const merged = {
+        ...(defaultContentDefinitions[key] ?? {}),
+        ...(userContentDefinitions[key] ?? {}),
+      };
+      mergedContentDefinitions[key] = merged;
+      if (updateSounds && merged.revealSoundPath && merged.revealSoundKey) {
+        soundEffectPaths[merged.revealSoundKey] = merged.revealSoundPath;
+      }
+    }
+
+    const nextLibrary = {};
+    await Promise.all(
+      Object.entries(mergedContentDefinitions).map(async ([key, definition]) => {
+        const entry = { ...definition };
+        let texture = entry.texture;
+        if (!texture && entry.texturePath) {
+          texture = await loadTexture(entry.texturePath);
+        }
+
+        const playSound =
+          typeof entry.playSound === "function"
+            ? (context = {}) => entry.playSound({ key, ...context })
+            : null;
+
+        nextLibrary[key] = {
+          key,
+          texture,
+          palette: entry.palette ?? {},
+          fallbackPalette: entry.fallbackPalette ?? {},
+          iconSizePercentage: entry.iconSizePercentage,
+          iconRevealedSizeFactor: entry.iconRevealedSizeFactor,
+          configureIcon: entry.configureIcon,
+          onReveal: entry.onReveal,
+          playSound,
+        };
+      })
+    );
+
+    contentLibrary = nextLibrary;
+    availableContentKeys = Object.keys(nextLibrary);
+    currentThemeId = resolvedThemeId;
+
+    return { themeId: resolvedThemeId };
   }
+
+  await buildContentLibrary(opts.themeId, { updateSounds: true });
 
   const sound = await loadSoundLibrary();
   const soundManager = createSoundManager(sound, soundEffectPaths);
-
-  const contentLibrary = {};
-  await Promise.all(
-    Object.entries(mergedContentDefinitions).map(async ([key, definition]) => {
-      const entry = { ...definition };
-      let texture = entry.texture;
-      if (!texture && entry.texturePath) {
-        texture = await loadTexture(entry.texturePath);
-      }
-
-      const playSound =
-        typeof entry.playSound === "function"
-          ? (context = {}) => entry.playSound({ key, ...context })
-          : null;
-
-      contentLibrary[key] = {
-        key,
-        texture,
-        palette: entry.palette ?? {},
-        fallbackPalette: entry.fallbackPalette ?? {},
-        iconSizePercentage: entry.iconSizePercentage,
-        iconRevealedSizeFactor: entry.iconRevealedSizeFactor,
-        configureIcon: entry.configureIcon,
-        onReveal: entry.onReveal,
-        playSound,
-      };
-    })
-  );
 
   const matchSparkTexture = await loadTexture(sparkSpriteUrl);
 
@@ -861,27 +886,7 @@ export async function createGame(mount, opts = {}) {
     }
   }
 
-  scene.buildGrid({
-    interactionFactory: () => ({
-      onPointerOver: handlePointerOver,
-      onPointerOut: handlePointerOut,
-      onPointerDown: handlePointerDown,
-      onPointerUp: handlePointerUp,
-      onPointerUpOutside: handlePointerUp,
-      onPointerTap: handleCardTap,
-    }),
-  });
-
-  registerCards();
-  soundManager.play("gameStart");
-
-  function reset() {
-    rules.reset();
-    currentAssignments.clear();
-    resetRoundOutcome();
-    rules.setAssignments(currentAssignments);
-    scene.hideWinPopup();
-    scene.clearGrid();
+  function buildSceneGrid() {
     scene.buildGrid({
       interactionFactory: () => ({
         onPointerOver: handlePointerOver,
@@ -893,7 +898,38 @@ export async function createGame(mount, opts = {}) {
       }),
     });
     registerCards();
+  }
+
+  buildSceneGrid();
+  soundManager.play("gameStart");
+
+  function reset() {
+    rules.reset();
+    currentAssignments.clear();
+    resetRoundOutcome();
+    rules.setAssignments(currentAssignments);
+    scene.hideWinPopup();
+    scene.clearGrid();
+    buildSceneGrid();
     notifyStateChange();
+  }
+
+  async function setTheme(themeId, { resetGame = true } = {}) {
+    const previousTheme = currentThemeId;
+    await buildContentLibrary(themeId);
+    if (resetGame) {
+      reset();
+      soundManager.play("gameStart");
+    }
+    return {
+      themeId: currentThemeId,
+      previousTheme,
+      contentKeys: [...availableContentKeys],
+    };
+  }
+
+  function getTheme() {
+    return currentThemeId;
   }
 
   function setMines() {
@@ -991,7 +1027,7 @@ export async function createGame(mount, opts = {}) {
   }
 
   function getAvailableContentKeys() {
-    return Object.keys(contentLibrary);
+    return [...availableContentKeys];
   }
 
   return {
@@ -1009,5 +1045,7 @@ export async function createGame(mount, opts = {}) {
     setAnimationsEnabled,
     setRoundAssignments,
     getCardContentKeys: getAvailableContentKeys,
+    setTheme,
+    getTheme,
   };
 }

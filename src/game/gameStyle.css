@@ -35,12 +35,16 @@
 }
 
 .loading {
+  position: absolute;
+  inset: 0;
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100%;
+  background: rgba(9, 27, 38, 0.92);
   font-size: 1.5rem;
   color: #eaff00;
+  z-index: 2;
+  pointer-events: all;
 }
 
 .loading::after {
