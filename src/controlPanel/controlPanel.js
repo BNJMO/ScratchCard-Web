@@ -90,6 +90,16 @@ export class ControlPanel extends EventTarget {
       Math.min(Math.floor(Number(this.options.initialMines) || 1), this.maxMines)
     );
 
+    this.themeLabelText = options.themeLabel ?? "Theme";
+    this.themeOptions = this.normalizeThemeOptions(options.themes);
+    this.pendingThemeSelection =
+      typeof options.initialThemeId === "string"
+        ? options.initialThemeId
+        : this.themeOptions[0]?.id ?? "";
+    this.currentThemeId = this.pendingThemeSelection || null;
+    this.themeSelectState = "clickable";
+    this.themeSelectSuppressChange = false;
+
     this.container = document.createElement("div");
     this.container.className = "control-panel";
     this.host.appendChild(this.container);
@@ -303,6 +313,7 @@ export class ControlPanel extends EventTarget {
 
     this.buildBetButton();
     this.buildRandomPickButton();
+    this.buildThemeSelect();
     this.buildProfitOnWinDisplay();
     this.buildProfitDisplay();
 
@@ -615,6 +626,37 @@ export class ControlPanel extends EventTarget {
     return { wrapper, input, icon, stepper };
   }
 
+  normalizeThemeOptions(themes) {
+    if (!Array.isArray(themes)) {
+      return [];
+    }
+
+    return themes
+      .map((theme) => {
+        if (!theme) {
+          return null;
+        }
+        const id =
+          typeof theme === "string"
+            ? theme
+            : theme?.id != null
+            ? String(theme.id)
+            : null;
+        if (!id) {
+          return null;
+        }
+        const labelSource =
+          typeof theme === "object" && typeof theme.name === "string"
+            ? theme.name
+            : null;
+        const name = labelSource?.trim()
+          ? labelSource
+          : id.replace(/_/g, " ");
+        return { id, name };
+      })
+      .filter(Boolean);
+  }
+
   buildBetButton() {
     this.betButton = document.createElement("button");
     this.betButton.type = "button";
@@ -644,6 +686,46 @@ export class ControlPanel extends EventTarget {
     this.setRandomPickState(this.randomPickButtonState);
   }
 
+  buildThemeSelect() {
+    const parent = this.manualSection ?? this.scrollContainer;
+    if (!parent) {
+      return;
+    }
+
+    this.themeLabel = this.createSectionLabel(this.themeLabelText);
+    parent.appendChild(this.themeLabel);
+
+    this.themeSelectWrapper = document.createElement("div");
+    this.themeSelectWrapper.className = "control-select-field";
+
+    this.themeSelect = document.createElement("select");
+    this.themeSelect.className = "control-select";
+    this.themeSelect.setAttribute("aria-label", this.themeLabelText);
+    this.themeSelect.addEventListener("change", () => {
+      if (this.themeSelectSuppressChange) {
+        return;
+      }
+      const value = this.themeSelect.value || "";
+      this.currentThemeId = value || null;
+      this.pendingThemeSelection = value;
+      this.dispatchThemeChange();
+    });
+    this.themeSelectWrapper.appendChild(this.themeSelect);
+
+    const arrow = document.createElement("span");
+    arrow.className = "control-select-arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    this.themeSelectWrapper.appendChild(arrow);
+
+    parent.appendChild(this.themeSelectWrapper);
+
+    this.refreshThemeOptions({
+      selected: this.pendingThemeSelection,
+      emit: false,
+    });
+    this.setThemeSelectState(this.themeSelectState);
+  }
+
   refreshMinesOptions({ emit = true } = {}) {
     if (!this.minesSelect) return;
     const selected = Math.max(1, Math.min(this.currentMines, this.maxMines));
@@ -666,6 +748,83 @@ export class ControlPanel extends EventTarget {
     }
   }
 
+  refreshThemeOptions({ selected, emit = false } = {}) {
+    const options = this.themeOptions ?? [];
+    const desired =
+      selected ??
+      this.pendingThemeSelection ??
+      (options.length > 0 ? options[0].id : "");
+
+    this.pendingThemeSelection = desired;
+
+    if (!this.themeSelect || !this.themeSelectWrapper) {
+      this.currentThemeId = desired || null;
+      if (emit && this.currentThemeId) {
+        this.dispatchThemeChange();
+      }
+      return;
+    }
+
+    const previous = this.currentThemeId;
+
+    this.themeSelect.innerHTML = "";
+
+    if (!options.length) {
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "No themes available";
+      this.themeSelect.appendChild(placeholder);
+      this.themeSelectSuppressChange = true;
+      this.themeSelect.value = "";
+      this.themeSelectSuppressChange = false;
+      this.currentThemeId = null;
+      this.pendingThemeSelection = "";
+      this.setThemeSelectState("non-clickable");
+      return;
+    }
+
+    let target = desired;
+    if (!target || !options.some((option) => option.id === target)) {
+      target = options[0].id;
+    }
+
+    for (const option of options) {
+      const element = document.createElement("option");
+      element.value = option.id;
+      element.textContent = option.name ?? option.id.replace(/_/g, " ");
+      element.selected = option.id === target;
+      this.themeSelect.appendChild(element);
+    }
+
+    this.themeSelectSuppressChange = true;
+    this.themeSelect.value = target;
+    this.themeSelectSuppressChange = false;
+    this.currentThemeId = target || null;
+    this.pendingThemeSelection = target;
+    this.setThemeSelectState(this.themeSelectState);
+
+    if (emit && target && target !== previous) {
+      this.dispatchThemeChange();
+    }
+  }
+
+  setThemeOptions(themes = [], { selected, emit = false } = {}) {
+    this.themeOptions = this.normalizeThemeOptions(themes);
+    const nextSelection =
+      selected ??
+      this.pendingThemeSelection ??
+      (this.themeOptions.length > 0 ? this.themeOptions[0].id : "");
+    this.pendingThemeSelection = nextSelection;
+    if (this.themeSelect) {
+      this.refreshThemeOptions({ selected: nextSelection, emit });
+    } else {
+      this.currentThemeId = nextSelection || null;
+      if (emit && this.currentThemeId) {
+        this.dispatchThemeChange();
+      }
+    }
+  }
+
   setMinesValue(value, { emit = true } = {}) {
     const numeric = Math.floor(Number(value));
     const clamped = Math.max(1, Math.min(Number.isFinite(numeric) ? numeric : 1, this.maxMines));
@@ -676,6 +835,35 @@ export class ControlPanel extends EventTarget {
     this.updateGemsValue();
     if (emit) {
       this.dispatchMinesChange();
+    }
+  }
+
+  setThemeValue(value, { emit = false } = {}) {
+    const options = this.themeOptions ?? [];
+    const fallback = options.length > 0 ? options[0].id : "";
+    const normalized = options.some((option) => option.id === value)
+      ? value
+      : fallback;
+
+    this.pendingThemeSelection = normalized;
+
+    if (!this.themeSelect || !this.themeSelectWrapper) {
+      const previous = this.currentThemeId;
+      this.currentThemeId = normalized || null;
+      if (emit && this.currentThemeId && this.currentThemeId !== previous) {
+        this.dispatchThemeChange();
+      }
+      return;
+    }
+
+    const previous = this.currentThemeId;
+    this.themeSelectSuppressChange = true;
+    this.themeSelect.value = normalized || "";
+    this.themeSelectSuppressChange = false;
+    this.currentThemeId = normalized || null;
+
+    if (emit && this.currentThemeId && this.currentThemeId !== previous) {
+      this.dispatchThemeChange();
     }
   }
 
@@ -710,6 +898,10 @@ export class ControlPanel extends EventTarget {
     return Math.max(0, this.totalTiles - this.currentMines);
   }
 
+  getThemeValue() {
+    return this.currentThemeId ?? null;
+  }
+
   updateGemsValue() {
     if (!this.gemsValue) return;
     this.gemsValue.textContent = String(this.getGemsValue());
@@ -722,6 +914,21 @@ export class ControlPanel extends EventTarget {
           value: this.getMinesValue(),
           totalTiles: this.getTotalTiles(),
           gems: this.getGemsValue(),
+        },
+      })
+    );
+  }
+
+  dispatchThemeChange() {
+    const themeId = this.getThemeValue();
+    if (!themeId) {
+      return;
+    }
+    this.dispatchEvent(
+      new CustomEvent("themechange", {
+        detail: {
+          themeId,
+          themeName: themeId.replace(/_/g, " "),
         },
       })
     );
@@ -1357,6 +1564,22 @@ export class ControlPanel extends EventTarget {
     const isClickable = normalized === "clickable";
     this.autoStartButton.disabled = !isClickable;
     this.autoStartButton.classList.toggle("is-non-clickable", !isClickable);
+  }
+
+  setThemeSelectState(state) {
+    if (!this.themeSelect || !this.themeSelectWrapper) return;
+    const normalized =
+      state === "clickable" || state === true || state === "enabled"
+        ? "clickable"
+        : "non-clickable";
+    this.themeSelectState = normalized;
+    const hasOptions = Array.isArray(this.themeOptions)
+      ? this.themeOptions.length > 0
+      : false;
+    const isClickable = normalized === "clickable" && hasOptions;
+    this.themeSelect.disabled = !isClickable;
+    this.themeSelect.setAttribute("aria-disabled", String(!isClickable));
+    this.themeSelectWrapper.classList.toggle("is-non-clickable", !isClickable);
   }
 
   setMinesSelectState(state) {
