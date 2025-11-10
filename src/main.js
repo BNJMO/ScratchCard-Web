@@ -2,6 +2,10 @@ import { createGame } from "./game/game.js";
 import { ControlPanel } from "./controlPanel/controlPanel.js";
 import { ServerRelay } from "./serverRelay.js";
 import { createServerDummy } from "./serverDummy/serverDummy.js";
+import {
+  getDefaultThemeId as getDefaultSpritesheetThemeId,
+  listAvailableThemes,
+} from "./game/spritesheetProvider.js";
 
 import tileTapDownSoundUrl from "../assets/sounds/TileTapDown.wav";
 import tileFlipSoundUrl from "../assets/sounds/TileFlip.wav";
@@ -38,6 +42,49 @@ const currentRoundAssignments = new Map();
 
 let totalProfitMultiplierValue = 1;
 let totalProfitAmountDisplayValue = "0.00000000";
+
+const themeEntries = listAvailableThemes();
+const availableThemeIds = themeEntries.map((entry) => entry.id);
+let currentThemeId =
+  getDefaultSpritesheetThemeId() ??
+  (availableThemeIds.length > 0 ? availableThemeIds[0] : null);
+
+const gameMount = document.querySelector("#game");
+let gameLoadingOverlay = gameMount?.querySelector(".loading") ?? null;
+let themeChangeInProgress = false;
+
+function ensureGameLoadingOverlay() {
+  if (!gameMount) {
+    return null;
+  }
+  if (!gameLoadingOverlay || !gameMount.contains(gameLoadingOverlay)) {
+    gameLoadingOverlay = document.createElement("div");
+    gameLoadingOverlay.className = "loading";
+    gameLoadingOverlay.textContent = "Loading Game";
+    gameLoadingOverlay.hidden = true;
+    gameLoadingOverlay.setAttribute("aria-hidden", "true");
+    gameMount.appendChild(gameLoadingOverlay);
+  }
+  return gameLoadingOverlay;
+}
+
+function showGameLoading() {
+  const overlay = ensureGameLoadingOverlay();
+  if (!overlay) {
+    return;
+  }
+  overlay.hidden = false;
+  overlay.setAttribute("aria-hidden", "false");
+}
+
+function hideGameLoading() {
+  const overlay = ensureGameLoadingOverlay();
+  if (!overlay) {
+    return;
+  }
+  overlay.hidden = true;
+  overlay.setAttribute("aria-hidden", "true");
+}
 
 const AUTO_RESET_DELAY_MS = 1000;
 let autoResetDelayMs = AUTO_RESET_DELAY_MS;
@@ -96,6 +143,60 @@ function setTotalProfitAmountValue(value) {
   const normalized = normalizeTotalProfitAmount(value);
   totalProfitAmountDisplayValue = normalized;
   controlPanel?.setProfitValue?.(normalized);
+}
+
+async function changeGameTheme(themeId) {
+  const normalized = typeof themeId === "string" ? themeId : null;
+  if (!normalized) {
+    controlPanel?.setThemeValue?.(currentThemeId, { emit: false });
+    return;
+  }
+  if (normalized === currentThemeId && game) {
+    return;
+  }
+  if (themeChangeInProgress) {
+    return;
+  }
+  if (!availableThemeIds.includes(normalized)) {
+    controlPanel?.setThemeValue?.(currentThemeId, { emit: false });
+    return;
+  }
+  if (!game) {
+    currentThemeId = normalized;
+    opts.themeId = currentThemeId;
+    controlPanel?.setThemeValue?.(currentThemeId, { emit: false });
+    return;
+  }
+
+  themeChangeInProgress = true;
+  const previousTheme = currentThemeId;
+  showGameLoading();
+  controlPanel?.setThemeSelectClickable?.(false);
+
+  if (autoRunActive) {
+    stopAutoBetProcess({ reason: "theme-change" });
+  }
+
+  try {
+    const result = await game.setTheme(normalized);
+    currentThemeId = result?.themeId ?? normalized;
+    availableCardTypes = game?.getCardContentKeys?.() ?? [];
+    opts.themeId = currentThemeId;
+    manualRoundNeedsReset = false;
+    finalizeRound();
+    const animationsEnabled = controlPanel?.getAnimationsEnabled?.();
+    if (animationsEnabled != null) {
+      game?.setAnimationsEnabled?.(Boolean(animationsEnabled));
+    }
+  } catch (error) {
+    console.error("Failed to change game theme", error);
+    currentThemeId = previousTheme;
+  } finally {
+    controlPanel?.setThemeValue?.(currentThemeId, { emit: false });
+    controlPanel?.setThemeSelectClickable?.(availableThemeIds.length > 0);
+    hideGameLoading();
+    themeChangeInProgress = false;
+  }
 }
 
 function sendRelayMessage(type, payload = {}) {
@@ -869,6 +970,7 @@ const opts = {
   fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Arial",
   grid: GRID_SIZE,
   mines: 1,
+  themeId: currentThemeId,
   autoResetDelayMs: AUTO_RESET_DELAY_MS,
   iconSizePercentage: 0.9,
   iconRevealedSizeOpacity: 0.2,
@@ -921,6 +1023,20 @@ const opts = {
       initialMines,
     });
     controlPanelMode = controlPanel?.getMode?.() ?? "manual";
+    if (controlPanel?.setThemeOptions) {
+      controlPanel.setThemeOptions(availableThemeIds);
+      if (
+        currentThemeId &&
+        availableThemeIds.includes(currentThemeId)
+      ) {
+        controlPanel.setThemeValue(currentThemeId, { emit: false });
+      } else if (availableThemeIds.length > 0) {
+        currentThemeId = availableThemeIds[0];
+        opts.themeId = currentThemeId;
+        controlPanel.setThemeValue(currentThemeId, { emit: false });
+      }
+      controlPanel.setThemeSelectClickable(false);
+    }
     controlPanel.addEventListener("modechange", (event) => {
       const nextMode = event.detail?.mode === "auto" ? "auto" : "manual";
       const previousMode = controlPanelMode;
@@ -995,6 +1111,14 @@ const opts = {
         value: event.detail?.value,
       });
     });
+    controlPanel.addEventListener("themechange", (event) => {
+      const themeId = event.detail?.id;
+      if (typeof themeId !== "string") {
+        controlPanel.setThemeValue?.(currentThemeId, { emit: false });
+        return;
+      }
+      void changeGameTheme(themeId);
+    });
     controlPanel.addEventListener("strategychange", (event) => {
       sendRelayMessage("control:strategy-mode", {
         key: event.detail?.key,
@@ -1057,6 +1181,21 @@ const opts = {
   try {
     game = await createGame("#game", opts);
     window.game = game;
+    const reportedTheme = game?.getTheme?.();
+    if (typeof reportedTheme === "string") {
+      currentThemeId = reportedTheme;
+    }
+    if (
+      currentThemeId &&
+      !availableThemeIds.includes(currentThemeId) &&
+      availableThemeIds.length > 0
+    ) {
+      currentThemeId = availableThemeIds[0];
+    }
+    opts.themeId = currentThemeId;
+    controlPanel?.setThemeValue?.(currentThemeId, { emit: false });
+    controlPanel?.setThemeSelectClickable?.(availableThemeIds.length > 0);
+    hideGameLoading();
     availableCardTypes = game?.getCardContentKeys?.() ?? [];
     autoResetDelayMs = Number(
       game?.getAutoResetDelay?.() ?? AUTO_RESET_DELAY_MS
@@ -1083,6 +1222,7 @@ const opts = {
     controlPanel?.setShowDummyServerClickable?.(true);
   } catch (e) {
     console.error("Game initialization failed:", e);
+    hideGameLoading();
     const gameDiv = document.querySelector("#game");
     if (gameDiv) {
       gameDiv.innerHTML = `

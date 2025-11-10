@@ -11,38 +11,88 @@ const SPRITESHEET_RESOLUTION_FACTOR = 0.75;
 const CARD_TYPE_COUNT = SPRITESHEET_COLUMNS * SPRITESHEET_ROWS;
 
 const SPRITESHEET_MODULES = import.meta.glob(
-  "../../assets/sprites/spritesheets/*.png",
-  { eager: true }
+  "../../assets/sprites/spritesheets_*/**/*.png"
 );
 
-const SPRITESHEET_ENTRIES = Object.entries(SPRITESHEET_MODULES)
-  .map(([path, mod]) => {
-    const texturePath =
-      typeof mod === "string" ? mod : mod?.default ?? mod ?? null;
-    if (!texturePath) {
-      return null;
+const THEME_PATH_REGEX = /spritesheets_([^/]+)\/(.+)\.png$/i;
+
+const themeRegistry = (() => {
+  const registry = new Map();
+  Object.entries(SPRITESHEET_MODULES).forEach(([path, loader]) => {
+    const match = path.match(THEME_PATH_REGEX);
+    if (!match) {
+      return;
     }
-    const match = path.match(/\/([0-9]+)\.png$/i);
-    const order = match ? Number.parseInt(match[1], 10) : Number.NaN;
-    return {
+    const [, rawThemeId, fileName] = match;
+    const themeId = rawThemeId;
+    const orderMatch = fileName.match(/([0-9]+)$/);
+    const order = orderMatch ? Number.parseInt(orderMatch[1], 10) : Number.NaN;
+    if (!registry.has(themeId)) {
+      registry.set(themeId, []);
+    }
+    registry.get(themeId).push({
       path,
-      texturePath,
+      loader,
       order: Number.isFinite(order) ? order : Number.POSITIVE_INFINITY,
-    };
-  })
-  .filter(Boolean)
-  .sort((a, b) => {
-    if (a.order !== b.order) {
-      return a.order - b.order;
-    }
-    return a.path.localeCompare(b.path);
+      fileName,
+    });
   });
 
-let cachedAnimations = null;
-let loadingPromise = null;
+  const sortedThemes = Array.from(registry.entries())
+    .map(([id, entries]) => {
+      const sortedEntries = [...entries].sort((a, b) => {
+        if (a.order !== b.order) {
+          return a.order - b.order;
+        }
+        return a.fileName.localeCompare(b.fileName);
+      });
+      return { id, entries: sortedEntries };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  const mapById = new Map(sortedThemes.map((theme) => [theme.id, theme]));
+
+  return {
+    list: sortedThemes,
+    byId: mapById,
+  };
+})();
+
+let cachedAnimations = new Map();
+let loadingPromises = new Map();
 // Retain references to the loaded spritesheet textures so that the
 // underlying base textures remain alive while frame textures are in use.
-let retainedSpritesheets = [];
+const retainedSpritesheets = new Map();
+
+function getThemeEntries(themeId) {
+  return themeRegistry.byId.get(themeId) ?? null;
+}
+
+function sanitizeModule(module) {
+  if (typeof module === "string") {
+    return module;
+  }
+  if (module && typeof module === "object") {
+    if (typeof module.default === "string") {
+      return module.default;
+    }
+    if (typeof module.default === "object" && module.default != null) {
+      return module.default;
+    }
+  }
+  return module ?? null;
+}
+
+export function listAvailableThemes() {
+  return themeRegistry.list.map(({ id }) => ({
+    id,
+    name: id.replace(/_/g, " "),
+  }));
+}
+
+export function getDefaultThemeId() {
+  return themeRegistry.list[0]?.id ?? null;
+}
 
 function sliceSpritesheet(baseTexture) {
   const frames = [];
@@ -87,12 +137,32 @@ async function loadTexture(path) {
   }
 }
 
-async function buildAnimations() {
+async function resolveModulePath(loader) {
+  if (typeof loader !== "function") {
+    return null;
+  }
+  try {
+    const mod = await loader();
+    return sanitizeModule(mod);
+  } catch (error) {
+    console.error("Failed to import spritesheet", error);
+    return null;
+  }
+}
+
+async function buildAnimations(themeId) {
+  const themeEntries = getThemeEntries(themeId);
+  if (!themeEntries) {
+    return [];
+  }
+
   const buckets = Array.from({ length: CARD_TYPE_COUNT }, () => []);
   const loadedSheets = [];
 
-  for (const entry of SPRITESHEET_ENTRIES) {
-    const texture = await loadTexture(entry.texturePath);
+  for (const entry of themeEntries.entries) {
+    const modulePath = await resolveModulePath(entry.loader);
+    if (!modulePath) continue;
+    const texture = await loadTexture(modulePath);
     if (!texture) continue;
 
     loadedSheets.push(texture);
@@ -115,7 +185,7 @@ async function buildAnimations() {
     });
   }
 
-  retainedSpritesheets = loadedSheets;
+  retainedSpritesheets.set(themeId, loadedSheets);
 
   return buckets.map((textures, index) => ({
     key: `cardType_${index}`,
@@ -124,30 +194,47 @@ async function buildAnimations() {
   }));
 }
 
-export async function loadCardTypeAnimations() {
-  if (cachedAnimations) {
-    return cachedAnimations;
-  }
-  if (loadingPromise) {
-    return loadingPromise;
+export async function loadCardTypeAnimations(themeId = getDefaultThemeId()) {
+  if (!themeId) {
+    return [];
   }
 
-  loadingPromise = buildAnimations()
+  if (cachedAnimations.has(themeId)) {
+    return cachedAnimations.get(themeId);
+  }
+
+  if (loadingPromises.has(themeId)) {
+    return loadingPromises.get(themeId);
+  }
+
+  const promise = buildAnimations(themeId)
     .then((animations) => {
-      cachedAnimations = animations;
-      loadingPromise = null;
-      return cachedAnimations;
+      cachedAnimations.set(themeId, animations);
+      loadingPromises.delete(themeId);
+      return animations;
     })
     .catch((error) => {
       console.error("Failed to build card type animations", error);
-      loadingPromise = null;
-      cachedAnimations = [];
-      return cachedAnimations;
+      loadingPromises.delete(themeId);
+      cachedAnimations.delete(themeId);
+      return [];
     });
 
-  return loadingPromise;
+  loadingPromises.set(themeId, promise);
+  return promise;
 }
 
 export function getCardTypeCount() {
   return CARD_TYPE_COUNT;
+}
+
+export function releaseTheme(themeId) {
+  if (!themeId) return;
+  const retained = retainedSpritesheets.get(themeId) ?? [];
+  for (const texture of retained) {
+    texture?.destroy?.(true);
+  }
+  retainedSpritesheets.delete(themeId);
+  cachedAnimations.delete(themeId);
+  loadingPromises.delete(themeId);
 }
