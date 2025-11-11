@@ -440,6 +440,7 @@ export async function createGame(mount, opts = {}) {
     winningCards: new Set(),
     pendingReveals: 0,
     manualMatchPairsTriggered: 0,
+    winFramesActivated: false,
   };
   const manualMatchTracker = new Map();
   const manualShakingCards = new Set();
@@ -505,6 +506,11 @@ export async function createGame(mount, opts = {}) {
   }
 
   function resetRoundOutcome() {
+    if (currentRoundOutcome.winningCards.size > 0) {
+      for (const card of currentRoundOutcome.winningCards) {
+        card?.hideWinFrame?.({ immediate: true });
+      }
+    }
     currentRoundOutcome.betResult = null;
     currentRoundOutcome.winningKey = null;
     currentRoundOutcome.winningCountRequired = 0;
@@ -516,6 +522,7 @@ export async function createGame(mount, opts = {}) {
     currentRoundOutcome.winningCards.clear();
     currentRoundOutcome.pendingReveals = 0;
     currentRoundOutcome.manualMatchPairsTriggered = 0;
+    currentRoundOutcome.winFramesActivated = false;
     cancelPendingAutoReveals();
     resetManualMatchTracking();
   }
@@ -649,6 +656,9 @@ export async function createGame(mount, opts = {}) {
       currentAssignments.get(assignmentKey) ??
       null;
 
+    const previousRevealedWinning = currentRoundOutcome.revealedWinning;
+    let revealedWinningCard = false;
+
     if (
       currentRoundOutcome.betResult === "win" &&
       currentRoundOutcome.winningKey != null &&
@@ -657,6 +667,24 @@ export async function createGame(mount, opts = {}) {
     ) {
       currentRoundOutcome.revealedWinning += 1;
       currentRoundOutcome.winningCards.add(card);
+      revealedWinningCard = true;
+    }
+
+    const reachedWinningThreshold =
+      currentRoundOutcome.betResult === "win" &&
+      currentRoundOutcome.winningCountRequired > 0 &&
+      !currentRoundOutcome.winFramesActivated &&
+      previousRevealedWinning < currentRoundOutcome.winningCountRequired &&
+      currentRoundOutcome.revealedWinning >=
+        currentRoundOutcome.winningCountRequired;
+
+    if (reachedWinningThreshold) {
+      currentRoundOutcome.winFramesActivated = true;
+      for (const winningCard of currentRoundOutcome.winningCards) {
+        winningCard.showWinFrame?.({ animate: true });
+      }
+    } else if (currentRoundOutcome.winFramesActivated && revealedWinningCard) {
+      card.showWinFrame?.({ animate: true });
     }
 
     if (card._pendingWinningReveal) {
@@ -881,6 +909,9 @@ export async function createGame(mount, opts = {}) {
     resetRoundOutcome();
     rules.setAssignments(currentAssignments);
     scene.hideWinPopup();
+    for (const card of scene.cards) {
+      card?.hideWinFrame?.({ immediate: true });
+    }
     scene.clearGrid();
     scene.buildGrid({
       interactionFactory: () => ({

@@ -1,4 +1,5 @@
 import { AnimatedSprite, BlurFilter, Container, Graphics, Sprite, Texture } from "pixi.js";
+import winFrameSpriteUrl from "../../assets/sprites/WinFrame.svg";
 import Ease from "../ease.js";
 
 const AUTO_SELECTION_COLOR = 0xCFDD00;
@@ -64,6 +65,10 @@ export class Card {
     this._deferredIconConfigurator = null;
     this._deferredIconRevealedByPlayer = false;
     this._deferredIconStartFromFirstFrame = false;
+    this._winFrame = null;
+    this._winFrameVisible = false;
+    this._winFrameTweenCancel = null;
+    this._winFrameTweenToken = null;
 
     this._tiltDir = 1;
     this._baseX = 0;
@@ -282,6 +287,7 @@ export class Card {
 
     this._winHighlighted = true;
     this.#stopWinHighlightLoop();
+    this.showWinFrame({ animate: false });
     this.flipFace(faceColor);
     this.bump({ scaleMultiplier, duration });
     this._winHighlightInterval = setInterval(() => {
@@ -644,12 +650,139 @@ export class Card {
     this.#cancelSpawnAnimation();
     this.#stopWinHighlightLoop();
     this._icon?.stop?.();
+    this.#cancelWinFrameTween();
     this.container?.destroy?.({ children: true });
     this._wrap = null;
     this._card = null;
     this._inset = null;
     this._icon = null;
     this._matchEffectsLayer = null;
+    this._winFrame = null;
+  }
+
+  showWinFrame({ animate = true, duration = 260 } = {}) {
+    const frame = this._winFrame;
+    if (!frame) return;
+
+    if (this._winFrameVisible && frame.alpha >= 1) {
+      frame.visible = true;
+      frame.alpha = 1;
+      return;
+    }
+
+    this._winFrameVisible = true;
+    frame.visible = true;
+
+    this.#cancelWinFrameTween();
+
+    const effectiveDuration = animate ? duration : 0;
+    if (effectiveDuration <= 0 || this.disableAnimations) {
+      frame.alpha = 1;
+      frame.visible = true;
+      return;
+    }
+
+    const startAlpha = Number.isFinite(frame.alpha) ? frame.alpha : 0;
+    const endAlpha = 1;
+    const token = Symbol("card-win-frame");
+    this._winFrameTweenToken = token;
+    frame.alpha = startAlpha;
+
+    const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+    const cancel = this.tween({
+      duration: effectiveDuration,
+      ease: easeOut,
+      update: (progress) => {
+        if (this._winFrameTweenToken !== token || !frame || frame.destroyed) {
+          return;
+        }
+        const nextAlpha = startAlpha + (endAlpha - startAlpha) * progress;
+        frame.alpha = Math.min(1, Math.max(0, nextAlpha));
+        if (frame.alpha > 0 && !frame.visible) {
+          frame.visible = true;
+        }
+      },
+      complete: () => {
+        if (this._winFrameTweenToken !== token || !frame || frame.destroyed) {
+          return;
+        }
+        frame.alpha = 1;
+        frame.visible = true;
+        this._winFrameTweenToken = null;
+        this._winFrameTweenCancel = null;
+      },
+    });
+
+    this._winFrameTweenCancel = () => {
+      cancel?.();
+      if (this._winFrameTweenToken === token) {
+        this._winFrameTweenToken = null;
+      }
+      this._winFrameTweenCancel = null;
+    };
+  }
+
+  hideWinFrame({ immediate = false } = {}) {
+    const frame = this._winFrame;
+    if (!frame) return;
+
+    this._winFrameVisible = false;
+    this.#cancelWinFrameTween();
+
+    if (immediate || this.disableAnimations) {
+      frame.alpha = 0;
+      frame.visible = false;
+      return;
+    }
+
+    const startAlpha = Number.isFinite(frame.alpha) ? frame.alpha : 0;
+    if (startAlpha <= 0) {
+      frame.alpha = 0;
+      frame.visible = false;
+      return;
+    }
+
+    const token = Symbol("card-hide-win-frame");
+    this._winFrameTweenToken = token;
+    const cancel = this.tween({
+      duration: 180,
+      ease: (t) => 1 - Math.pow(1 - t, 2),
+      update: (progress) => {
+        if (this._winFrameTweenToken !== token || !frame || frame.destroyed) {
+          return;
+        }
+        const alpha = startAlpha * (1 - progress);
+        frame.alpha = Math.max(0, alpha);
+        if (frame.alpha <= 0.001) {
+          frame.visible = false;
+        }
+      },
+      complete: () => {
+        if (this._winFrameTweenToken !== token || !frame || frame.destroyed) {
+          return;
+        }
+        frame.alpha = 0;
+        frame.visible = false;
+        this._winFrameTweenToken = null;
+        this._winFrameTweenCancel = null;
+      },
+    });
+
+    this._winFrameTweenCancel = () => {
+      cancel?.();
+      if (this._winFrameTweenToken === token) {
+        this._winFrameTweenToken = null;
+      }
+      this._winFrameTweenCancel = null;
+    };
+  }
+
+  #cancelWinFrameTween() {
+    if (typeof this._winFrameTweenCancel === "function") {
+      this._winFrameTweenCancel();
+    }
+    this._winFrameTweenCancel = null;
+    this._winFrameTweenToken = null;
   }
 
   #stopWinHighlightLoop() {
@@ -942,6 +1075,13 @@ export class Card {
       matchEffectsLayer,
       icon
     );
+    const winFrame = Sprite.from(winFrameSpriteUrl);
+    winFrame.width = tileSize;
+    winFrame.height = tileSize;
+    winFrame.visible = false;
+    winFrame.alpha = 0;
+    winFrame.eventMode = "none";
+    flipWrap.addChild(winFrame);
     flipWrap.position.set(tileSize / 2, tileSize / 2);
     flipWrap.pivot.set(tileSize / 2, tileSize / 2);
 
@@ -961,6 +1101,8 @@ export class Card {
     this._tileSize = tileSize;
     this._tileRadius = radius;
     this._tilePad = pad;
+    this._winFrame = winFrame;
+    this.hideWinFrame({ immediate: true });
 
     const s0 = 0.0001;
     flipWrap.scale?.set?.(s0);
