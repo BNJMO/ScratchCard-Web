@@ -6,6 +6,10 @@ const SPRITESHEET_CELL_WIDTH = 152;
 const SPRITESHEET_CELL_HEIGHT = 166;
 const SPRITESHEET_HORIZONTAL_GAP = 4;
 const SPRITESHEET_VERTICAL_GAP = 8;
+const SPRITESHEET_PADDING_LEFT = 0;
+const SPRITESHEET_PADDING_TOP = 0;
+const SPRITESHEET_PADDING_RIGHT = 0;
+const SPRITESHEET_PADDING_BOTTOM = 0;
 // Scales the hardcoded cell metrics so higher-resolution spritesheets can be used.
 const SPRITESHEET_RESOLUTION_FACTOR = 0.75;
 const CARD_TYPE_COUNT = SPRITESHEET_COLUMNS * SPRITESHEET_ROWS;
@@ -53,13 +57,20 @@ function sliceSpritesheet(baseTexture) {
   const cellHeight = SPRITESHEET_CELL_HEIGHT * resolutionFactor;
   const horizontalGap = SPRITESHEET_HORIZONTAL_GAP * resolutionFactor;
   const verticalGap = SPRITESHEET_VERTICAL_GAP * resolutionFactor;
+  const paddingLeft = SPRITESHEET_PADDING_LEFT * resolutionFactor;
+  const paddingTop = SPRITESHEET_PADDING_TOP * resolutionFactor;
+  const paddingRight = SPRITESHEET_PADDING_RIGHT * resolutionFactor;
+  const paddingBottom = SPRITESHEET_PADDING_BOTTOM * resolutionFactor;
 
   for (let row = 0; row < SPRITESHEET_ROWS; row += 1) {
     for (let col = 0; col < SPRITESHEET_COLUMNS; col += 1) {
-      const frameX = col * cellWidth + col * horizontalGap;
-      const frameY = row * cellHeight + row * verticalGap;
+      const frameX = paddingLeft + col * cellWidth + col * horizontalGap;
+      const frameY = paddingTop + row * cellHeight + row * verticalGap;
 
-      if (frameX + cellWidth > width || frameY + cellHeight > height) {
+      if (
+        frameX + cellWidth > width - paddingRight ||
+        frameY + cellHeight > height - paddingBottom
+      ) {
         frames.push(null);
         continue;
       }
