@@ -2,6 +2,11 @@ import { createGame } from "./game/game.js";
 import { ControlPanel } from "./controlPanel/controlPanel.js";
 import { ServerRelay } from "./serverRelay.js";
 import { createServerDummy } from "./serverDummy/serverDummy.js";
+import {
+  getAvailableThemes as getCardThemes,
+  getDefaultThemeId as getDefaultCardThemeId,
+  setCurrentThemeId as setCardThemeId,
+} from "./game/spritesheetProvider.js";
 
 import tileTapDownSoundUrl from "../assets/sounds/TileTapDown.wav";
 import tileFlipSoundUrl from "../assets/sounds/TileFlip.wav";
@@ -9,6 +14,11 @@ import tileHoverSoundUrl from "../assets/sounds/TileHover.wav";
 import gameStartSoundUrl from "../assets/sounds/GameStart.wav";
 import roundWinSoundUrl from "../assets/sounds/Win.wav";
 import roundLostSoundUrl from "../assets/sounds/Lost.wav";
+
+const availableThemeOptions = getCardThemes();
+const defaultCardThemeId = getDefaultCardThemeId();
+const fallbackThemeId = availableThemeOptions[0]?.id ?? null;
+const baseThemeId = defaultCardThemeId ?? fallbackThemeId ?? null;
 
 let game;
 let controlPanel;
@@ -901,6 +911,7 @@ const opts = {
   winPopupShowDuration: 260,
   winPopupWidth: 260,
   winPopupHeight: 200,
+  themeId: baseThemeId,
   getMode: () => controlPanelMode,
   onCardSelected: (selection) => handleCardSelected(selection),
   onChange: handleGameStateChange,
@@ -912,6 +923,16 @@ const opts = {
   const initialMines = Math.max(1, Math.min(opts.mines ?? 1, maxMines));
   opts.mines = initialMines;
 
+  const normalizedThemeId = availableThemeOptions.some(
+    (theme) => theme.id === opts.themeId
+  )
+    ? opts.themeId
+    : baseThemeId;
+  if (normalizedThemeId) {
+    setCardThemeId(normalizedThemeId);
+  }
+  opts.themeId = normalizedThemeId ?? null;
+
   // Initialize Control Panel
   try {
     controlPanel = new ControlPanel("#control-panel", {
@@ -919,6 +940,8 @@ const opts = {
       totalTiles,
       maxMines,
       initialMines,
+      themes: availableThemeOptions,
+      initialThemeId: normalizedThemeId ?? "",
     });
     controlPanelMode = controlPanel?.getMode?.() ?? "manual";
     controlPanel.addEventListener("modechange", (event) => {
@@ -1021,6 +1044,23 @@ const opts = {
       const enabled = Boolean(event.detail?.enabled);
       opts.disableAnimations = !enabled;
       game?.setAnimationsEnabled?.(enabled);
+    });
+    controlPanel.addEventListener("themechange", async (event) => {
+      const themeId = event.detail?.themeId;
+      if (!themeId) {
+        return;
+      }
+      setCardThemeId(themeId);
+      opts.themeId = themeId;
+      try {
+        const applied = await game?.setTheme?.(themeId);
+        if (applied) {
+          availableCardTypes =
+            game?.getCardContentKeys?.() ?? availableCardTypes;
+        }
+      } catch (error) {
+        console.error("Failed to apply theme", error);
+      }
     });
     controlPanel.addEventListener("showdummyserver", () => {
       serverDummyUI?.show?.();

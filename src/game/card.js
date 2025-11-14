@@ -516,6 +516,114 @@ export class Card {
     return true;
   }
 
+  refreshRevealedAppearance({
+    content,
+    iconSizePercentage,
+    iconRevealedSizeFactor,
+    palette,
+    revealedByPlayer = false,
+    useSelectionTint = false,
+    startFromFirstFrame = true,
+  } = {}) {
+    if (!this.revealed || !content) {
+      return;
+    }
+
+    const icon = this._icon;
+    const tileSize = this._tileSize;
+    if (icon && tileSize) {
+      icon.visible = true;
+      const baseSize =
+        iconSizePercentage ??
+        content.iconSizePercentage ??
+        this.iconOptions.sizePercentage;
+      const revealFactor =
+        iconRevealedSizeFactor ??
+        content.iconRevealedSizeFactor ??
+        this.iconOptions.revealedSizeFactor;
+      const maxW = tileSize * baseSize * revealFactor;
+      const maxH = tileSize * baseSize * revealFactor;
+      if (Number.isFinite(maxW) && Number.isFinite(maxH)) {
+        icon.width = maxW;
+        icon.height = maxH;
+      }
+
+      if (content.texture) {
+        if (Array.isArray(icon.textures)) {
+          icon.textures = [content.texture];
+        }
+        icon.texture = content.texture;
+      }
+
+      const shouldAnimateIcon = Boolean(
+        this._winHighlighted ||
+          this._pendingWinningReveal ||
+          this._pendingIconAnimation
+      );
+
+      const context = {
+        card: this,
+        revealedByPlayer,
+        shouldPlayAnimation: shouldAnimateIcon,
+        animationHandled: false,
+        startFromFirstFrame,
+      };
+
+      content.configureIcon?.(icon, context);
+
+      if (!context.animationHandled && Array.isArray(icon.textures)) {
+        icon.gotoAndStop?.(0);
+        if (
+          context.shouldPlayAnimation &&
+          icon.textures.length > 1 &&
+          typeof icon.play === "function"
+        ) {
+          icon.play();
+        } else {
+          icon.stop?.();
+        }
+      }
+    }
+
+    const resolvedPalette = palette ?? this.palette ?? {};
+
+    if (!this._winHighlighted) {
+      const facePalette = this.#resolveRevealColor({
+        paletteSet: content.palette?.face,
+        revealedByPlayer,
+        useSelectionTint,
+        fallbackRevealed:
+          content.fallbackPalette?.face?.revealed ??
+          resolvedPalette.cardFace ??
+          this.palette.cardFace ??
+          this.palette.defaultTint,
+        fallbackUnrevealed:
+          content.fallbackPalette?.face?.unrevealed ??
+          resolvedPalette.cardFaceUnrevealed ??
+          this.palette.cardFaceUnrevealed ??
+          this.palette.defaultTint,
+      });
+      this.flipFace(facePalette);
+    }
+
+    const insetPalette = this.#resolveRevealColor({
+      paletteSet: content.palette?.inset,
+      revealedByPlayer,
+      useSelectionTint: false,
+      fallbackRevealed:
+        content.fallbackPalette?.inset?.revealed ??
+        resolvedPalette.cardInset ??
+        this.palette.cardInset ??
+        this.palette.defaultTint,
+      fallbackUnrevealed:
+        content.fallbackPalette?.inset?.unrevealed ??
+        resolvedPalette.cardInsetUnrevealed ??
+        this.palette.cardInsetUnrevealed ??
+        this.palette.defaultTint,
+    });
+    this.flipInset(insetPalette);
+  }
+
   playDeferredIconAnimation() {
     if (!this.revealed || !this._pendingIconAnimation) {
       return;
