@@ -98,33 +98,53 @@ async function loadTexture(path) {
   }
 }
 
+const TEXTURE_LOAD_CONCURRENCY = 4;
+
 async function buildAnimations() {
   const buckets = Array.from({ length: CARD_TYPE_COUNT }, () => []);
   const loadedSheets = [];
 
-  for (const entry of SPRITESHEET_ENTRIES) {
-    const texture = await loadTexture(entry.texturePath);
-    if (!texture) continue;
+  let nextIndex = 0;
 
-    loadedSheets.push(texture);
-    const baseTexture = texture.baseTexture ?? texture.source ?? null;
-    if (!baseTexture) {
-      continue;
-    }
-    const frames = sliceSpritesheet(baseTexture);
-
-    frames.forEach((frameTexture, index) => {
-      if (!frameTexture) {
+  async function worker() {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      const entry = SPRITESHEET_ENTRIES[currentIndex];
+      if (!entry) {
         return;
       }
-      const bucket = buckets[index];
-      if (bucket) {
-        bucket.push(frameTexture);
-      } else {
-        frameTexture.destroy(true);
+
+      const texture = await loadTexture(entry.texturePath);
+      if (!texture) continue;
+
+      loadedSheets.push(texture);
+      const baseTexture = texture.baseTexture ?? texture.source ?? null;
+      if (!baseTexture) {
+        continue;
       }
-    });
+      const frames = sliceSpritesheet(baseTexture);
+
+      frames.forEach((frameTexture, index) => {
+        if (!frameTexture) {
+          return;
+        }
+        const bucket = buckets[index];
+        if (bucket) {
+          bucket.push(frameTexture);
+        } else {
+          frameTexture.destroy(true);
+        }
+      });
+    }
   }
+
+  const workerCount = Math.min(
+    TEXTURE_LOAD_CONCURRENCY,
+    Math.max(1, SPRITESHEET_ENTRIES.length)
+  );
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   retainedSpritesheets = loadedSheets;
 
