@@ -1,7 +1,12 @@
 import { Assets } from "pixi.js";
 import { GameScene } from "./gameScene.js";
 import { GameRules } from "./gameRules.js";
-import { loadCardTypeAnimations } from "./spritesheetProvider.js";
+import {
+  getAvailableThemes,
+  getDefaultThemeId,
+  loadCardTypeAnimations,
+  setCurrentThemeId,
+} from "./spritesheetProvider.js";
 import tileTapDownSoundUrl from "../../assets/sounds/TileTapDown.wav";
 import tileFlipSoundUrl from "../../assets/sounds/TileFlip.wav";
 import tileHoverSoundUrl from "../../assets/sounds/TileHover.wav";
@@ -299,15 +304,27 @@ export async function createGame(mount, opts = {}) {
     twoMatch: opts.twoMatchSoundPath ?? twoMatchSoundUrl,
   };
 
-  const cardTypeAnimations = await loadCardTypeAnimations();
-  if (!cardTypeAnimations.length) {
-    throw new Error(
-      "No scratch card textures found under assets/sprites/spritesheets"
-    );
-  }
+  const availableThemeOptions = getAvailableThemes();
+  const defaultThemeId = getDefaultThemeId();
+  const requestedThemeId =
+    typeof opts.themeId === "string"
+      ? opts.themeId
+      : typeof opts.initialThemeId === "string"
+      ? opts.initialThemeId
+      : null;
 
-  const defaultContentDefinitions = cardTypeAnimations.reduce(
-    (acc, entry, index) => {
+  const hasRequestedTheme = availableThemeOptions.some(
+    (theme) => theme.id === requestedThemeId
+  );
+
+  let activeThemeId = setCurrentThemeId(
+    hasRequestedTheme ? requestedThemeId : defaultThemeId
+  );
+
+  const contentLibrary = {};
+
+  function buildDefaultContentDefinitionsFromAnimations(animations) {
+    return animations.reduce((acc, entry, index) => {
       const key = entry?.key ?? `cardType_${index}`;
       const sanitizedFrames = sanitizeAnimationFrames(entry?.frames);
       const primaryTexture = entry?.texture ?? sanitizedFrames[0] ?? null;
@@ -338,58 +355,93 @@ export async function createGame(mount, opts = {}) {
 
       acc[key] = definition;
       return acc;
-    },
-    {}
-  );
+    }, {});
+  }
 
-  const userContentDefinitions = opts.contentDefinitions ?? {};
-  const mergedContentDefinitions = {};
-  const contentKeys = new Set([
-    ...Object.keys(defaultContentDefinitions),
-    ...Object.keys(userContentDefinitions),
-  ]);
+  function mergeContentDefinitionMaps(defaultDefinitions, overrides) {
+    const result = {};
+    const keys = new Set([
+      ...Object.keys(defaultDefinitions ?? {}),
+      ...Object.keys(overrides ?? {}),
+    ]);
+    for (const key of keys) {
+      result[key] = {
+        ...(defaultDefinitions?.[key] ?? {}),
+        ...(overrides?.[key] ?? {}),
+      };
+    }
+    return result;
+  }
 
-  for (const key of contentKeys) {
-    const merged = {
-      ...(defaultContentDefinitions[key] ?? {}),
-      ...(userContentDefinitions[key] ?? {}),
-    };
-    mergedContentDefinitions[key] = merged;
-    if (merged.revealSoundPath && merged.revealSoundKey) {
-      soundEffectPaths[merged.revealSoundKey] = merged.revealSoundPath;
+  async function updateContentLibraryFromDefinitions(definitions) {
+    const entries = Object.entries(definitions ?? {});
+    await Promise.all(
+      entries.map(async ([key, definition]) => {
+        const existing = contentLibrary[key] ?? {};
+        let texture = definition.texture ?? existing.texture ?? null;
+        if (!texture && definition.texturePath) {
+          texture = existing.texture ?? (await loadTexture(definition.texturePath));
+        }
+
+        const playSound =
+          typeof definition.playSound === "function"
+            ? (context = {}) => definition.playSound({ key, ...context })
+            : null;
+
+        contentLibrary[key] = {
+          key,
+          texture,
+          palette: definition.palette ?? {},
+          fallbackPalette: definition.fallbackPalette ?? {},
+          iconSizePercentage: definition.iconSizePercentage,
+          iconRevealedSizeFactor: definition.iconRevealedSizeFactor,
+          configureIcon: definition.configureIcon,
+          onReveal: definition.onReveal,
+          playSound,
+        };
+      })
+    );
+
+    for (const key of Object.keys(contentLibrary)) {
+      if (!definitions[key]) {
+        delete contentLibrary[key];
+      }
     }
   }
 
+  const cardTypeAnimations = await loadCardTypeAnimations(activeThemeId);
+  if (!cardTypeAnimations.length) {
+    throw new Error(
+      "No scratch card textures found under assets/sprites/spritesheets_*"
+    );
+  }
+
+  const userContentDefinitions = opts.contentDefinitions ?? {};
+  let defaultContentDefinitions = {};
+  let mergedContentDefinitions = {};
+
+  async function applyThemeAnimations(animations) {
+    defaultContentDefinitions =
+      buildDefaultContentDefinitionsFromAnimations(animations);
+    mergedContentDefinitions = mergeContentDefinitionMaps(
+      defaultContentDefinitions,
+      userContentDefinitions
+    );
+
+    for (const definition of Object.values(mergedContentDefinitions)) {
+      if (definition.revealSoundPath && definition.revealSoundKey) {
+        soundEffectPaths[definition.revealSoundKey] =
+          definition.revealSoundPath;
+      }
+    }
+
+    await updateContentLibraryFromDefinitions(mergedContentDefinitions);
+  }
+
+  await applyThemeAnimations(cardTypeAnimations);
+
   const sound = await loadSoundLibrary();
   const soundManager = createSoundManager(sound, soundEffectPaths);
-
-  const contentLibrary = {};
-  await Promise.all(
-    Object.entries(mergedContentDefinitions).map(async ([key, definition]) => {
-      const entry = { ...definition };
-      let texture = entry.texture;
-      if (!texture && entry.texturePath) {
-        texture = await loadTexture(entry.texturePath);
-      }
-
-      const playSound =
-        typeof entry.playSound === "function"
-          ? (context = {}) => entry.playSound({ key, ...context })
-          : null;
-
-      contentLibrary[key] = {
-        key,
-        texture,
-        palette: entry.palette ?? {},
-        fallbackPalette: entry.fallbackPalette ?? {},
-        iconSizePercentage: entry.iconSizePercentage,
-        iconRevealedSizeFactor: entry.iconRevealedSizeFactor,
-        configureIcon: entry.configureIcon,
-        onReveal: entry.onReveal,
-        playSound,
-      };
-    })
-  );
 
   const matchSparkTexture = await loadTexture(sparkSpriteUrl);
 
@@ -558,6 +610,59 @@ export async function createGame(mount, opts = {}) {
       clearScheduledAutoReveal(card);
       card.stopMatchShake?.();
     }
+  }
+
+  function refreshRevealedCardIcons() {
+    for (const card of scene.cards) {
+      if (!card || !card.revealed) {
+        continue;
+      }
+      const assignmentKey = `${card.row},${card.col}`;
+      const faceKey =
+        card._revealedFace ?? currentAssignments.get(assignmentKey) ?? null;
+      if (!faceKey) {
+        continue;
+      }
+      const content = contentLibrary[faceKey];
+      if (!content) {
+        continue;
+      }
+      if (typeof card.refreshRevealedAppearance === "function") {
+        card.refreshRevealedAppearance({
+          content,
+          iconSizePercentage,
+          iconRevealedSizeFactor,
+          palette,
+          useSelectionTint: false,
+        });
+      }
+    }
+  }
+
+  async function setCardTheme(themeId, { refreshCards = true } = {}) {
+    const normalizedThemeId = setCurrentThemeId(themeId);
+    if (!normalizedThemeId) {
+      console.warn("setCardTheme: theme not available", themeId);
+      return false;
+    }
+
+    const animations = await loadCardTypeAnimations(normalizedThemeId);
+    if (!animations.length) {
+      console.error(
+        "setCardTheme: no spritesheets found for theme",
+        normalizedThemeId
+      );
+      return false;
+    }
+
+    await applyThemeAnimations(animations);
+    activeThemeId = normalizedThemeId;
+
+    if (refreshCards) {
+      refreshRevealedCardIcons();
+    }
+
+    return true;
   }
 
   function notifyStateChange() {
@@ -1008,6 +1113,9 @@ export async function createGame(mount, opts = {}) {
     getAutoResetDelay: () => autoResetDelayMs,
     setAnimationsEnabled,
     setRoundAssignments,
+    setTheme: setCardTheme,
+    getThemeId: () => activeThemeId,
+    getAvailableThemes: () => availableThemeOptions.slice(),
     getCardContentKeys: getAvailableContentKeys,
   };
 }
