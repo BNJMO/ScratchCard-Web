@@ -930,8 +930,9 @@ export class Card {
       });
 
     const inset = new Graphics();
+    const insetRadius = Math.max(0, radius - pad);
     inset
-      .roundRect(pad, pad, tileSize - pad * 2, tileSize - pad * 2, Math.max(0, radius - pad))
+      .roundRect(pad, pad, tileSize - pad * 2, tileSize - pad * 2, insetRadius)
       .fill(this.palette.tileInset);
 
     const icon = new AnimatedSprite([Texture.EMPTY]);
@@ -944,6 +945,12 @@ export class Card {
     icon.stop();
     icon.gotoAndStop?.(0);
 
+    const iconMask = new Graphics();
+    iconMask
+      .roundRect(pad, pad, tileSize - pad * 2, tileSize - pad * 2, insetRadius)
+      .fill(0xffffff);
+    icon.mask = iconMask;
+
     const matchEffectsLayer = new Container();
     matchEffectsLayer.position.set(tileSize / 2, tileSize / 2);
 
@@ -953,6 +960,7 @@ export class Card {
       elevationLip,
       card,
       inset,
+      iconMask,
       matchEffectsLayer,
       icon
     );
