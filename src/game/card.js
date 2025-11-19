@@ -84,6 +84,11 @@ export class Card {
       if (this._wrap) {
         this.setSkew(0);
       }
+      const icon = this._icon;
+      if (icon) {
+        icon.stop?.();
+        icon.gotoAndStop?.(0);
+      }
     }
   }
 
@@ -363,7 +368,8 @@ export class Card {
     const contentConfig = content ?? {};
     const contentKey =
       contentConfig.key ?? contentConfig.face ?? contentConfig.type ?? null;
-    const wantsIconAnimation = Boolean(shouldPlayIconAnimation);
+    const wantsIconAnimation =
+      Boolean(shouldPlayIconAnimation) && !this.disableAnimations;
     const shouldDeferIconAnimation = wantsIconAnimation && Boolean(deferIconAnimation);
     const shouldAnimateIconNow = wantsIconAnimation && !shouldDeferIconAnimation;
 
@@ -518,6 +524,14 @@ export class Card {
 
   playDeferredIconAnimation() {
     if (!this.revealed || !this._pendingIconAnimation) {
+      return;
+    }
+
+    if (this.disableAnimations) {
+      this._pendingIconAnimation = false;
+      this._deferredIconConfigurator = null;
+      this._deferredIconRevealedByPlayer = false;
+      this._deferredIconStartFromFirstFrame = false;
       return;
     }
 
