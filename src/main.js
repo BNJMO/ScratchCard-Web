@@ -13,6 +13,12 @@ import roundLostSoundUrl from "../assets/sounds/Lost.wav";
 let game;
 let controlPanel;
 let demoMode = true;
+const useAnimatedSpritesheets = true;
+const cardIconScale = 1.25;
+const cardIconOffsetX = 0;
+const cardIconOffsetY = -5;
+const cardSpritesheetAnimationSpeed = 0.14;
+const cardMatchShake = false;
 const serverRelay = new ServerRelay();
 let serverDummyUI = null;
 let suppressRelay = false;
@@ -254,6 +260,41 @@ function setControlPanelAutoStartState(isClickable) {
 function setControlPanelMinesState(isClickable) {
   controlPanel?.setMinesSelectState?.(
     isClickable ? "clickable" : "non-clickable"
+  );
+}
+
+function setControlPanelLoadingState(isLoading) {
+  if (!controlPanel) {
+    return;
+  }
+
+  if (isLoading) {
+    setControlPanelBetState(false);
+    setControlPanelRandomState(false);
+    setControlPanelAutoStartState(false);
+    setControlPanelMinesState(false);
+    controlPanel.setModeToggleClickable?.(false);
+    controlPanel.setBetControlsClickable?.(false);
+    controlPanel.setNumberOfBetsClickable?.(false);
+    controlPanel.setAdvancedToggleClickable?.(false);
+    controlPanel.setAdvancedStrategyControlsClickable?.(false);
+    controlPanel.setStopOnProfitClickable?.(false);
+    controlPanel.setStopOnLossClickable?.(false);
+    controlPanel.setAnimationsToggleClickable?.(false);
+    controlPanel.setShowDummyServerClickable?.(false);
+    return;
+  }
+
+  finalizeRound();
+  controlPanel.setNumberOfBetsClickable?.(true);
+  controlPanel.setAdvancedToggleClickable?.(true);
+  controlPanel.setAdvancedStrategyControlsClickable?.(true);
+  controlPanel.setStopOnProfitClickable?.(true);
+  controlPanel.setStopOnLossClickable?.(true);
+  controlPanel.setAnimationsToggleClickable?.(true);
+  controlPanel.setShowDummyServerClickable?.(true);
+  controlPanel.setDummyServerPanelVisibility?.(
+    serverDummyUI?.isVisible?.() ?? false
   );
 }
 
@@ -870,7 +911,7 @@ const opts = {
   grid: GRID_SIZE,
   mines: 1,
   autoResetDelayMs: AUTO_RESET_DELAY_MS,
-  iconSizePercentage: 0.9,
+  iconSizePercentage: 0.7,
   iconRevealedSizeOpacity: 0.2,
   iconRevealedSizeFactor: 0.7,
   cardsSpawnDuration: 350,
@@ -881,9 +922,9 @@ const opts = {
   hoverEnterDuration: 120,
   hoverExitDuration: 200,
   hoverTiltAxis: "x",
-  hoverSkewAmount: 0.02,
+  hoverSkewAmount: 0.00,
   disableAnimations: false,
-  wiggleSelectionEnabled: true,
+  wiggleSelectionEnabled: false,
   wiggleSelectionDuration: 900,
   wiggleSelectionTimes: 15,
   wiggleSelectionIntensity: 0.03,
@@ -892,6 +933,12 @@ const opts = {
   flipDelayMax: 500,
   flipDuration: 300,
   flipEaseFunction: "easeInOutSine",
+  useAnimatedSpritesheets,
+  cardIconScale,
+  cardIconOffsetX,
+  cardIconOffsetY,
+  cardSpritesheetAnimationSpeed,
+  cardMatchShake,
   tileTapDownSoundPath: tileTapDownSoundUrl,
   tileFlipSoundPath: tileFlipSoundUrl,
   tileHoverSoundPath: tileHoverSoundUrl,
@@ -915,7 +962,7 @@ const opts = {
   // Initialize Control Panel
   try {
     controlPanel = new ControlPanel("#control-panel", {
-      gameName: "Scratch Cards",
+      gameName: "Flip Cards - Mermaids",
       totalTiles,
       maxMines,
       initialMines,
@@ -1028,18 +1075,7 @@ const opts = {
     controlPanel.addEventListener("bet", handleBetButtonClick);
     controlPanel.addEventListener("randompick", handleRandomPickClick);
     controlPanel.addEventListener("startautobet", handleStartAutobetClick);
-    setControlPanelBetState(false);
-    setControlPanelRandomState(false);
-    setControlPanelAutoStartState(false);
-    setControlPanelMinesState(false);
-    controlPanel.setModeToggleClickable?.(false);
-    controlPanel.setBetControlsClickable?.(false);
-    controlPanel.setNumberOfBetsClickable?.(false);
-    controlPanel.setAdvancedToggleClickable?.(false);
-    controlPanel.setAdvancedStrategyControlsClickable?.(false);
-    controlPanel.setStopOnProfitClickable?.(false);
-    controlPanel.setStopOnLossClickable?.(false);
-    controlPanel.setAnimationsToggleClickable?.(false);
+    finalizeRound();
     controlPanel.setBetAmountDisplay("$0.00");
     setTotalProfitMultiplierValue(0.0);
     controlPanel.setProfitOnWinDisplay("$0.00");
@@ -1048,7 +1084,7 @@ const opts = {
     controlPanel.setDummyServerPanelVisibility(
       serverDummyUI?.isVisible?.() ?? false
     );
-    controlPanel.setShowDummyServerClickable?.(false);
+    setControlPanelLoadingState(true);
   } catch (err) {
     console.error("Control panel initialization failed:", err);
   }
@@ -1073,14 +1109,7 @@ const opts = {
     if (animationsEnabled != null) {
       game?.setAnimationsEnabled?.(Boolean(animationsEnabled));
     }
-    finalizeRound();
-    controlPanel?.setNumberOfBetsClickable?.(true);
-    controlPanel?.setAdvancedToggleClickable?.(true);
-    controlPanel?.setAdvancedStrategyControlsClickable?.(true);
-    controlPanel?.setStopOnProfitClickable?.(true);
-    controlPanel?.setStopOnLossClickable?.(true);
-    controlPanel?.setAnimationsToggleClickable?.(true);
-    controlPanel?.setShowDummyServerClickable?.(true);
+    setControlPanelLoadingState(false);
   } catch (e) {
     console.error("Game initialization failed:", e);
     const gameDiv = document.querySelector("#game");

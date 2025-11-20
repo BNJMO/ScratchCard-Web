@@ -10,32 +10,60 @@ import roundWinSoundUrl from "../../assets/sounds/Win.wav";
 import roundLostSoundUrl from "../../assets/sounds/Lost.wav";
 import twoMatchSoundUrl from "../../assets/sounds/2Match.wav";
 import sparkSpriteUrl from "../../assets/sprites/Spark.png";
+import winFrameSpriteUrl from "../../assets/sprites/winFrame.svg";
+import tileUnflippedSpriteUrl from "../../assets/sprites/tile_unflipped.svg";
+import tileHoveredSpriteUrl from "../../assets/sprites/tile_hovered.svg";
+import tileFlippedSpriteUrl from "../../assets/sprites/tile_flipped.svg";
+
+const optionalBackgroundSpriteModules = import.meta.glob(
+  "../../assets/sprites/game_background.svg",
+  {
+    eager: true,
+  }
+);
+
+const gameBackgroundSpriteUrl = (() => {
+  const module =
+    optionalBackgroundSpriteModules["../../assets/sprites/game_background.svg"];
+  if (!module) {
+    return null;
+  }
+  return typeof module === "string" ? module : module?.default ?? null;
+})();
+
+const DEFAULT_CARD_ANIMATION_SPEED = 0.16;
+const MS_PER_60FPS_FRAME = 1000 / 60;
+
+const CARD_TYPE_TEXTURE_MODULES = import.meta.glob(
+  "../../assets/sprites/cardTypes/static/cardType_*.svg",
+  { eager: true }
+);
 
 const DEFAULT_PALETTE = {
   appBg: 0x091b26,
-  tileBase: 0x2b4756,
-  tileInset: 0x2b4756,
-  tileStroke: 0x080e11,
-  tileStrokeFlipped: 0x0f0f0f,
+  tileBase: 0x223845, // main tile face
+  tileInset: 0x223845, // inner inset
+  tileStroke: 0x223845, // subtle outline
+  tileStrokeFlipped: 0x0f0f0f, // subtle outline
+  tileElevationBase: 0x152a33, // visible lip beneath tile face
+  tileElevationFlipped: 0x040c0f, // revealed tile elevation lip
+  tileElevationHover: 0x1f3f4c, // hover elevation lip
   tileElevationBase: 0x1b2931,
-  tileElevationShadow: 0x091b26,
-  hover: 0x528aa5,
+  tileElevationShadow: 0x091b26, // soft drop shadow
+  hover: 0x35586b, // hover
   pressedTint: 0x7a7a7a,
   defaultTint: 0xffffff,
-  cardFace: 0x0f181e,
-  cardFaceUnrevealed: 0x0f181e,
-  cardInset: 0x0f181e,
-  cardInsetUnrevealed: 0x0f181e,
+  cardFace: 0x061217,
+  cardFaceUnrevealed: 0x061217,
+  cardInset: 0x061217,
+  cardInsetUnrevealed: 0x061217,
   winPopupBorder: 0xeaff00,
   winPopupBackground: 0x091b26,
   winPopupMultiplierText: 0xeaff00,
   winPopupSeparationLine: 0x1b2931,
 };
 
-const WIN_FACE_COLOR = 0xeaff00;
-
-const DEFAULT_CARD_ANIMATION_SPEED = 0.16;
-const MS_PER_60FPS_FRAME = 1000 / 60;
+const WIN_FACE_COLOR = 0x061217;
 
 const SOUND_ALIASES = {
   tileHover: "mines.tileHover",
@@ -70,14 +98,85 @@ async function loadSoundLibrary() {
   }
 }
 
-async function loadTexture(path) {
+function getDevicePixelRatio() {
+  if (typeof window === "undefined") {
+    return 1;
+  }
+  const ratio = Number(window.devicePixelRatio);
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+}
+
+function resolveSvgResolution(svgResolution) {
+  if (Number.isFinite(svgResolution) && svgResolution > 0) {
+    return svgResolution;
+  }
+  const defaultMultiplier = 2;
+  const resolution = getDevicePixelRatio() * defaultMultiplier;
+  return Math.max(2, Math.ceil(resolution));
+}
+
+async function loadTexture(path, options = {}) {
   if (!path) return null;
   try {
-    return await Assets.load(path);
+    const isSvg = typeof path === "string" && /\.svg(?:$|\?)/i.test(path);
+    const asset = isSvg
+      ? {
+          src: path,
+          data: {
+            resolution: resolveSvgResolution(options.svgResolution),
+          },
+        }
+      : path;
+    return await Assets.load(asset);
   } catch (error) {
     console.error("Texture load failed", path, error);
     return null;
   }
+}
+
+function getCardTypeTextureEntries() {
+  return Object.entries(CARD_TYPE_TEXTURE_MODULES)
+    .map(([path, mod]) => {
+      const texturePath = typeof mod === "string" ? mod : mod?.default ?? null;
+      if (!texturePath) {
+        return null;
+      }
+      const match = path.match(/cardType_(\d+)/i);
+      const order = match ? Number.parseInt(match[1], 10) : Number.NaN;
+      return {
+        path,
+        texturePath,
+        order: Number.isFinite(order) ? order : Number.POSITIVE_INFINITY,
+        key: match ? `cardType_${match[1]}` : null,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.order !== b.order) {
+        return a.order - b.order;
+      }
+      return a.path.localeCompare(b.path);
+    });
+}
+
+async function loadCardTypeTextures({ svgResolution } = {}) {
+  const entries = getCardTypeTextureEntries();
+  const textures = [];
+
+  for (const entry of entries) {
+    const texture = await loadTexture(entry.texturePath, { svgResolution });
+    if (!texture) {
+      continue;
+    }
+    const key = entry.key ?? `cardType_${textures.length}`;
+    textures.push({
+      key,
+      frames: [texture],
+      texture,
+    });
+  }
+
+  return textures;
 }
 
 function getSoundAlias(key) {
@@ -151,7 +250,9 @@ function createAnimatedIconConfigurator(
   return (icon, context = {}) => {
     if (!icon) return;
 
-    const shouldPlayAnimation = Boolean(context?.shouldPlayAnimation);
+    const shouldPlayAnimation = Boolean(
+      context?.shouldPlayAnimation ?? true
+    );
     const startFromFirstFrame = Boolean(context?.startFromFirstFrame);
 
     if (Array.isArray(icon.textures)) {
@@ -238,6 +339,15 @@ export async function createGame(mount, opts = {}) {
 
   const iconSizePercentage = opts.iconSizePercentage ?? 0.7;
   const iconRevealedSizeFactor = opts.iconRevealedSizeFactor ?? 0.85;
+  const iconScaleMultiplier = Math.max(0, opts.cardIconScale ?? 1.0);
+  const iconOffsetX = Number(opts.cardIconOffsetX ?? 0) || 0;
+  const iconOffsetY = Number(opts.cardIconOffsetY ?? 0) || 0;
+  const matchShakeEnabled = opts.cardMatchShake ?? true;
+  const cardSpritesheetAnimationSpeed = Number.isFinite(
+    opts.cardSpritesheetAnimationSpeed
+  )
+    ? opts.cardSpritesheetAnimationSpeed
+    : DEFAULT_CARD_ANIMATION_SPEED;
   const cardsSpawnDuration = opts.cardsSpawnDuration ?? 350;
   const revealAllIntervalDelay = opts.revealAllIntervalDelay ?? 40;
   const autoResetDelayMs = Number(opts.autoResetDelayMs ?? 1500);
@@ -250,7 +360,7 @@ export async function createGame(mount, opts = {}) {
     hoverEnabled: opts.hoverEnabled ?? true,
     hoverEnterDuration: opts.hoverEnterDuration ?? 120,
     hoverExitDuration: opts.hoverExitDuration ?? 200,
-    hoverSkewAmount: opts.hoverSkewAmount ?? 0.02,
+    hoverSkewAmount: opts.hoverSkewAmount ?? 0.00,
     hoverTiltAxis: opts.hoverTiltAxis ?? "x",
   };
 
@@ -289,6 +399,19 @@ export async function createGame(mount, opts = {}) {
     return { width, height };
   }
 
+  const svgRasterizationResolution = (() => {
+    const absolute = Number(opts.svgRasterizationResolution);
+    if (Number.isFinite(absolute) && absolute > 0) {
+      return absolute;
+    }
+    const multiplier = Number(opts.svgRasterizationResolutionMultiplier);
+    const safeMultiplier = Number.isFinite(multiplier) && multiplier > 0
+      ? multiplier
+      : 2;
+    const computed = Math.ceil(getDevicePixelRatio() * safeMultiplier);
+    return Math.max(2, computed);
+  })();
+
   const soundEffectPaths = {
     tileTapDown: opts.tileTapDownSoundPath ?? tileTapDownSoundUrl,
     tileFlip: opts.tileFlipSoundPath ?? tileFlipSoundUrl,
@@ -299,24 +422,27 @@ export async function createGame(mount, opts = {}) {
     twoMatch: opts.twoMatchSoundPath ?? twoMatchSoundUrl,
   };
 
-  const cardTypeAnimations = await loadCardTypeAnimations();
-  if (!cardTypeAnimations.length) {
+  const cardTypeEntries = (opts.useAnimatedSpritesheets ?? true)
+    ? await loadCardTypeAnimations()
+    : await loadCardTypeTextures({
+        svgResolution: svgRasterizationResolution,
+      });
+  if (!cardTypeEntries.length) {
     throw new Error(
-      "No scratch card textures found under assets/sprites/spritesheets"
+      opts.useAnimatedSpritesheets === false
+        ? "No scratch card textures found under assets/sprites/cardTypes"
+        : "No scratch card textures found under assets/sprites/spritesheets"
     );
   }
 
-  const defaultContentDefinitions = cardTypeAnimations.reduce(
+  const defaultContentDefinitions = cardTypeEntries.reduce(
     (acc, entry, index) => {
       const key = entry?.key ?? `cardType_${index}`;
       const sanitizedFrames = sanitizeAnimationFrames(entry?.frames);
       const primaryTexture = entry?.texture ?? sanitizedFrames[0] ?? null;
-      const configureIcon = createAnimatedIconConfigurator(
-        sanitizedFrames,
-        {
-          animationSpeed: DEFAULT_CARD_ANIMATION_SPEED,
-        }
-      );
+      const configureIcon = createAnimatedIconConfigurator(sanitizedFrames, {
+        animationSpeed: cardSpritesheetAnimationSpeed,
+      });
 
       const definition = {
         texture: primaryTexture,
@@ -369,7 +495,9 @@ export async function createGame(mount, opts = {}) {
       const entry = { ...definition };
       let texture = entry.texture;
       if (!texture && entry.texturePath) {
-        texture = await loadTexture(entry.texturePath);
+        texture = await loadTexture(entry.texturePath, {
+          svgResolution: svgRasterizationResolution,
+        });
       }
 
       const playSound =
@@ -391,7 +519,28 @@ export async function createGame(mount, opts = {}) {
     })
   );
 
-  const matchSparkTexture = await loadTexture(sparkSpriteUrl);
+
+  const [
+    gameBackgroundTexture,
+    matchSparkTexture,
+    winFrameTexture,
+    tileDefaultTexture,
+    tileHoverTexture,
+    tileFlippedTexture,
+  ] = await Promise.all([
+    loadTexture(gameBackgroundSpriteUrl, {svgResolution: svgRasterizationResolution,}),
+    loadTexture(sparkSpriteUrl),
+    loadTexture(winFrameSpriteUrl),
+    loadTexture(tileUnflippedSpriteUrl, {
+      svgResolution: svgRasterizationResolution,
+    }),
+    loadTexture(tileHoveredSpriteUrl, {
+      svgResolution: svgRasterizationResolution,
+    }),
+    loadTexture(tileFlippedSpriteUrl, {
+      svgResolution: svgRasterizationResolution,
+    }),
+  ]);
 
   const scene = new GameScene({
     root,
@@ -405,14 +554,24 @@ export async function createGame(mount, opts = {}) {
       icon: {
         sizePercentage: iconSizePercentage,
         revealedSizeFactor: iconRevealedSizeFactor,
+        scale: iconScaleMultiplier,
+        offsetX: iconOffsetX,
+        offsetY: iconOffsetY,
       },
       matchEffects: {
         sparkTexture: matchSparkTexture,
         sparkDuration: 1500,
       },
+      frameTexture: winFrameTexture,
+      stateTextures: {
+        default: tileDefaultTexture,
+        hover: tileHoverTexture,
+        flipped: tileFlippedTexture,
+      },
       winPopupWidth: winPopupOptions.winPopupWidth,
       winPopupHeight: winPopupOptions.winPopupHeight,
     },
+    backgroundTexture: gameBackgroundTexture,
     layoutOptions: { gapBetweenTiles },
     animationOptions: {
       ...hoverOptions,
@@ -440,6 +599,8 @@ export async function createGame(mount, opts = {}) {
     winningCards: new Set(),
     pendingReveals: 0,
     manualMatchPairsTriggered: 0,
+    winFramesShown: false,
+    winningAnimationsStarted: false,
   };
   const manualMatchTracker = new Map();
   const manualShakingCards = new Set();
@@ -516,8 +677,14 @@ export async function createGame(mount, opts = {}) {
     currentRoundOutcome.winningCards.clear();
     currentRoundOutcome.pendingReveals = 0;
     currentRoundOutcome.manualMatchPairsTriggered = 0;
+    currentRoundOutcome.winFramesShown = false;
+    currentRoundOutcome.winningAnimationsStarted = false;
     cancelPendingAutoReveals();
     resetManualMatchTracking();
+    for (const card of scene.cards) {
+      card?.hideWinFrame?.();
+      card?.stopIconAnimation?.({ resetToFirstFrame: true });
+    }
   }
 
   function applyRoundOutcomeMeta(meta = {}, assignments = []) {
@@ -601,8 +768,6 @@ export async function createGame(mount, opts = {}) {
       iconRevealedSizeFactor: iconRevealFactor,
       flipDuration,
       flipEaseFunction,
-      shouldPlayIconAnimation: isWinningFace,
-      deferIconAnimation: isWinningFace,
       onComplete: (instance, payload) => {
         currentRoundOutcome.pendingReveals = Math.max(
           0,
@@ -659,6 +824,33 @@ export async function createGame(mount, opts = {}) {
       currentRoundOutcome.winningCards.add(card);
     }
 
+    const reachedWinningThreshold =
+      currentRoundOutcome.betResult === "win" &&
+      currentRoundOutcome.winningCountRequired > 0 &&
+      currentRoundOutcome.revealedWinning >=
+        currentRoundOutcome.winningCountRequired;
+    if (
+      reachedWinningThreshold &&
+      !currentRoundOutcome.winFramesShown &&
+      currentRoundOutcome.winningCards.size > 0
+    ) {
+      currentRoundOutcome.winFramesShown = true;
+      for (const winningCard of currentRoundOutcome.winningCards) {
+        winningCard?.fadeInWinFrame?.({ duration: 250 });
+      }
+    }
+
+    if (
+      reachedWinningThreshold &&
+      !currentRoundOutcome.winningAnimationsStarted &&
+      currentRoundOutcome.winningCards.size > 0
+    ) {
+      currentRoundOutcome.winningAnimationsStarted = true;
+      for (const winningCard of currentRoundOutcome.winningCards) {
+        winningCard?.playIconAnimation?.({ startFromFirstFrame: true });
+      }
+    }
+
     if (card._pendingWinningReveal) {
       currentRoundOutcome.pendingWinningReveals = Math.max(
         0,
@@ -696,7 +888,7 @@ export async function createGame(mount, opts = {}) {
       }
       if (eligibleForEffect) {
         for (const trackedCard of tracked.cards) {
-          if (!manualShakingCards.has(trackedCard)) {
+          if (matchShakeEnabled && !manualShakingCards.has(trackedCard)) {
             trackedCard.startMatchShake?.();
             manualShakingCards.add(trackedCard);
           }
@@ -724,7 +916,7 @@ export async function createGame(mount, opts = {}) {
       const shouldPreserveWinShake =
         currentRoundOutcome.betResult === "win" &&
         currentRoundOutcome.winningCards.size > 0;
-      if (shouldPreserveWinShake) {
+      if (shouldPreserveWinShake && matchShakeEnabled) {
         stopAllMatchShakes({ preserve: currentRoundOutcome.winningCards });
         for (const winningCard of currentRoundOutcome.winningCards) {
           if (!manualShakingCards.has(winningCard)) {
@@ -749,9 +941,6 @@ export async function createGame(mount, opts = {}) {
         currentRoundOutcome.betResult === "win" &&
         currentRoundOutcome.winningCards.size > 0
       ) {
-        for (const winningCard of currentRoundOutcome.winningCards) {
-          winningCard.playDeferredIconAnimation?.();
-        }
         for (const winningCard of currentRoundOutcome.winningCards) {
           winningCard.highlightWin?.({ faceColor: WIN_FACE_COLOR });
         }

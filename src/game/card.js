@@ -1,7 +1,7 @@
-import { AnimatedSprite, BlurFilter, Container, Graphics, Sprite, Texture } from "pixi.js";
+import { AnimatedSprite, Container, Sprite, Texture } from "pixi.js";
 import Ease from "../ease.js";
 
-const AUTO_SELECTION_COLOR = 0xCFDD00;
+const AUTO_SELECTION_COLOR = 0xcfdd00;
 
 /**
  * Card encapsulates the visual and interaction logic for a single tile on the grid.
@@ -16,6 +16,8 @@ export class Card {
     animationOptions,
     iconOptions,
     matchEffects,
+    frameTexture,
+    stateTextures,
     row,
     col,
     tileSize,
@@ -29,10 +31,19 @@ export class Card {
     this.iconOptions = {
       sizePercentage: iconOptions?.sizePercentage ?? 0.7,
       revealedSizeFactor: iconOptions?.revealedSizeFactor ?? 0.85,
+      scaleMultiplier: Math.max(0, iconOptions?.scale ?? 1.0),
+      offsetX: Number(iconOptions?.offsetX ?? 0) || 0,
+      offsetY: Number(iconOptions?.offsetY ?? 0) || 0,
     };
     this.matchEffects = {
       sparkTexture: matchEffects?.sparkTexture ?? null,
       sparkDuration: Math.max(0, matchEffects?.sparkDuration ?? 1500),
+    };
+    this.frameTexture = frameTexture ?? null;
+    this.stateTextures = {
+      default: stateTextures?.default ?? null,
+      hover: stateTextures?.hover ?? null,
+      flipped: stateTextures?.flipped ?? null,
     };
     this.row = row;
     this.col = col;
@@ -59,17 +70,23 @@ export class Card {
     this._winHighlightInterval = null;
     this._spawnTweenCancel = null;
     this._matchEffectsLayer = null;
+    this._frameSprite = null;
+    this._frameTweenCancel = null;
     this._activeSparkCleanup = null;
-    this._pendingIconAnimation = false;
-    this._deferredIconConfigurator = null;
-    this._deferredIconRevealedByPlayer = false;
-    this._deferredIconStartFromFirstFrame = false;
 
     this._tiltDir = 1;
     this._baseX = 0;
     this._baseY = 0;
+    this._iconContentConfig = null;
+    this._iconLastRevealContext = null;
+    this._shadowContainer = null;
+    this._shadowWrap = null;
+    this._tileSprite = null;
+    this._tileState = "default";
+    this._isHovering = false;
 
     this.container = this.#createCard(tileSize);
+    this.hideWinFrame();
   }
 
   setDisableAnimations(disabled) {
@@ -81,19 +98,26 @@ export class Card {
       if (this._wrap?.scale?.set) {
         this._wrap.scale.set(1);
       }
+      if (this._shadowWrap?.scale?.set) {
+        this._shadowWrap.scale.set(1);
+      }
       if (this._wrap) {
         this.setSkew(0);
       }
-      const icon = this._icon;
-      if (icon) {
-        icon.stop?.();
-        icon.gotoAndStop?.(0);
+      if (this._frameSprite) {
+        this._frameTweenCancel?.();
+        this._frameTweenCancel = null;
       }
+      this.stopIconAnimation({ resetToFirstFrame: true });
     }
   }
 
   get displayObject() {
     return this.container;
+  }
+
+  get shadowDisplayObject() {
+    return this._shadowContainer;
   }
 
   setAutoSelected(selected, { refresh = true } = {}) {
@@ -104,9 +128,9 @@ export class Card {
   }
 
   applyTint(color) {
-    if (!this._card) return;
-    this._card.tint = color ?? this.palette.defaultTint;
-    this._inset.tint = color ?? this.palette.defaultTint;
+    if (!this._tileSprite) return;
+    const fallback = this.palette.defaultTint ?? 0xffffff;
+    this._tileSprite.tint = color ?? fallback;
   }
 
   refreshTint() {
@@ -128,13 +152,22 @@ export class Card {
 
   hover(on) {
     if (this.revealed || this._animating) return;
-    const { hoverEnabled, hoverEnterDuration, hoverExitDuration, hoverSkewAmount, hoverTiltAxis } =
-      this.animationOptions;
+    const {
+      hoverEnabled,
+      hoverEnterDuration,
+      hoverExitDuration,
+      hoverSkewAmount,
+      hoverTiltAxis,
+    } = this.animationOptions;
 
     if (!hoverEnabled) return;
 
     const wrap = this._wrap;
+    const shadowWrap = this._shadowWrap;
+    const shadowContainer = this._shadowContainer;
     if (!wrap) return;
+
+    this.#setHoverState(on);
 
     const startScale = wrap.scale.x;
     const endScale = on ? 1.03 : 1.0;
@@ -142,14 +175,20 @@ export class Card {
     const endSkew = on ? hoverSkewAmount : 0;
     const startY = this.container.y;
     const endY = on ? this._baseY - 3 : this._baseY;
+    const startShadowY = shadowContainer?.y ?? startY;
+    const endShadowY = on ? this._baseY - 3 : this._baseY;
 
     const token = Symbol("card-hover");
     this._hoverToken = token;
 
     if (this.disableAnimations) {
       this._wrap.scale?.set?.(endScale);
+      shadowWrap?.scale?.set?.(endScale);
       this.setSkew(endSkew);
       this.container.y = endY;
+      if (shadowContainer) {
+        shadowContainer.y = endShadowY;
+      }
       return;
     }
 
@@ -160,21 +199,36 @@ export class Card {
         if (this._hoverToken !== token) return;
         const scale = startScale + (endScale - startScale) * p;
         wrap.scale.x = wrap.scale.y = scale;
+        if (shadowWrap?.scale) {
+          shadowWrap.scale.x = shadowWrap.scale.y = scale;
+        }
         const k = startSkew + (endSkew - startSkew) * p;
         this.setSkew(k);
-        this.container.y = startY + (endY - startY) * p;
+        const nextY = startY + (endY - startY) * p;
+        this.container.y = nextY;
+        if (shadowContainer) {
+          shadowContainer.y =
+            startShadowY + (endShadowY - startShadowY) * p;
+        }
       },
       complete: () => {
         if (this._hoverToken !== token) return;
         wrap.scale.x = wrap.scale.y = endScale;
+        if (shadowWrap?.scale) {
+          shadowWrap.scale.x = shadowWrap.scale.y = endScale;
+        }
         this.setSkew(endSkew);
         this.container.y = endY;
+        if (shadowContainer) {
+          shadowContainer.y = endShadowY;
+        }
       },
     });
   }
 
   stopHover() {
     this._hoverToken = Symbol("card-hover-cancel");
+    this.#setHoverState(false);
   }
 
   wiggle() {
@@ -189,8 +243,10 @@ export class Card {
     if (!wiggleSelectionEnabled || this._animating) return;
 
     const wrap = this._wrap;
+    const shadowWrap = this._shadowWrap;
     const baseSkew = this.getSkew();
     const baseScale = wrap.scale.x;
+    const baseShadowScale = shadowWrap?.scale?.x ?? null;
 
     this._animating = true;
 
@@ -208,13 +264,21 @@ export class Card {
         this.setSkew(baseSkew + wiggle);
 
         const scaleWiggle =
-          1 + Math.sin(p * Math.PI * wiggleSelectionTimes) * wiggleSelectionScale;
+          1 +
+          Math.sin(p * Math.PI * wiggleSelectionTimes) * wiggleSelectionScale;
         wrap.scale.x = wrap.scale.y = baseScale * scaleWiggle;
+        if (shadowWrap?.scale && baseShadowScale != null) {
+          const next = baseShadowScale * scaleWiggle;
+          shadowWrap.scale.x = shadowWrap.scale.y = next;
+        }
       },
       complete: () => {
         if (this._wiggleToken !== token) return;
         this.setSkew(baseSkew);
         wrap.scale.x = wrap.scale.y = baseScale;
+        if (shadowWrap?.scale && baseShadowScale != null) {
+          shadowWrap.scale.x = shadowWrap.scale.y = baseShadowScale;
+        }
         this._animating = false;
       },
     });
@@ -232,10 +296,19 @@ export class Card {
     const baseScale = wrap.scale;
     if (!baseScale) return;
 
+    const shadowWrap = this._shadowWrap;
+    const shadowScale = shadowWrap?.scale ?? null;
+
     const baseScaleX = baseScale.x;
     const baseScaleY = baseScale.y;
     const targetScaleX = baseScaleX * scaleMultiplier;
     const targetScaleY = baseScaleY * scaleMultiplier;
+    const shadowBaseScaleX = shadowScale?.x ?? null;
+    const shadowBaseScaleY = shadowScale?.y ?? null;
+    const shadowTargetScaleX =
+      shadowBaseScaleX != null ? shadowBaseScaleX * scaleMultiplier : null;
+    const shadowTargetScaleY =
+      shadowBaseScaleY != null ? shadowBaseScaleY * scaleMultiplier : null;
 
     const token = Symbol("card-bump");
     this._bumpToken = token;
@@ -243,6 +316,10 @@ export class Card {
     if (this.disableAnimations || duration <= 0) {
       baseScale.x = baseScaleX;
       baseScale.y = baseScaleY;
+      if (shadowScale && shadowBaseScaleX != null && shadowBaseScaleY != null) {
+        shadowScale.x = shadowBaseScaleX;
+        shadowScale.y = shadowBaseScaleY;
+      }
       this._bumpToken = null;
       return;
     }
@@ -254,11 +331,7 @@ export class Card {
       ease: (t) => t,
       update: (t) => {
         const scale = wrap.scale;
-        if (
-          this._bumpToken !== token ||
-          this.destroyed ||
-          !scale
-        ) {
+        if (this._bumpToken !== token || this.destroyed || !scale) {
           return;
         }
         const phase = t < 0.5 ? easeOut(t / 0.5) : easeOut((1 - t) / 0.5);
@@ -266,6 +339,22 @@ export class Card {
         const nextScaleY = baseScaleY + (targetScaleY - baseScaleY) * phase;
         scale.x = nextScaleX;
         scale.y = nextScaleY;
+        if (
+          shadowScale &&
+          shadowBaseScaleX != null &&
+          shadowBaseScaleY != null &&
+          shadowTargetScaleX != null &&
+          shadowTargetScaleY != null
+        ) {
+          const nextShadowX =
+            shadowBaseScaleX +
+            (shadowTargetScaleX - shadowBaseScaleX) * phase;
+          const nextShadowY =
+            shadowBaseScaleY +
+            (shadowTargetScaleY - shadowBaseScaleY) * phase;
+          shadowScale.x = nextShadowX;
+          shadowScale.y = nextShadowY;
+        }
       },
       complete: () => {
         const scale = wrap.scale;
@@ -275,12 +364,70 @@ export class Card {
         }
         scale.x = baseScaleX;
         scale.y = baseScaleY;
+        if (shadowScale && shadowBaseScaleX != null && shadowBaseScaleY != null) {
+          shadowScale.x = shadowBaseScaleX;
+          shadowScale.y = shadowBaseScaleY;
+        }
         this._bumpToken = null;
       },
     });
   }
 
-  highlightWin({ faceColor = 0xeaff00, scaleMultiplier = 1.08, duration = 260 } = {}) {
+  playIconAnimation({ startFromFirstFrame = false } = {}) {
+    if (this.disableAnimations || !this.revealed) {
+      return;
+    }
+
+    const icon = this._icon;
+    if (!icon || icon.destroyed) {
+      return;
+    }
+
+    const iconContext = {
+      card: this,
+      revealedByPlayer: this._iconLastRevealContext?.revealedByPlayer ?? false,
+      shouldPlayAnimation: true,
+      startFromFirstFrame,
+      animationHandled: false,
+    };
+
+    const configureIcon = this._iconContentConfig?.configureIcon;
+    if (typeof configureIcon === "function") {
+      configureIcon(icon, iconContext);
+    }
+
+    if (!iconContext.animationHandled && Array.isArray(icon.textures)) {
+      if (startFromFirstFrame) {
+        icon.gotoAndStop?.(0);
+        if (typeof icon._currentTime === "number") {
+          icon._currentTime = 0;
+        }
+      }
+      if (icon.textures.length > 1 && typeof icon.play === "function") {
+        icon.play();
+      }
+    }
+  }
+
+  stopIconAnimation({ resetToFirstFrame = false } = {}) {
+    const icon = this._icon;
+    if (!icon) {
+      return;
+    }
+    icon.stop?.();
+    if (resetToFirstFrame) {
+      icon.gotoAndStop?.(0);
+      if (typeof icon._currentTime === "number") {
+        icon._currentTime = 0;
+      }
+    }
+  }
+
+  highlightWin({
+    faceColor = 0xeaff00,
+    scaleMultiplier = 1.03,
+    duration = 260,
+  } = {}) {
     if (!this.revealed || this._winHighlighted) {
       return;
     }
@@ -302,10 +449,18 @@ export class Card {
     if (!this._wrap?.scale || !this.container) return;
     this.stopMatchShake();
     this._wrap.scale.x = this._wrap.scale.y = 1;
+    if (this._shadowWrap?.scale) {
+      this._shadowWrap.scale.x = this._shadowWrap.scale.y = 1;
+    }
     this.setSkew(0);
     this.container.x = this._baseX;
     this.container.y = this._baseY;
     this.container.rotation = 0;
+    if (this._shadowContainer) {
+      this._shadowContainer.x = this._baseX;
+      this._shadowContainer.y = this._baseY;
+      this._shadowContainer.rotation = 0;
+    }
     this._shakeActive = false;
     this._bumpToken = null;
     this.#stopWinHighlightLoop();
@@ -320,14 +475,7 @@ export class Card {
     onComplete,
     flipDuration,
     flipEaseFunction,
-    shouldPlayIconAnimation = false,
-    deferIconAnimation = false,
   }) {
-    this._pendingIconAnimation = false;
-    this._deferredIconConfigurator = null;
-    this._deferredIconRevealedByPlayer = false;
-    this._deferredIconStartFromFirstFrame = false;
-
     if (!this._wrap || this.revealed) {
       return false;
     }
@@ -354,13 +502,14 @@ export class Card {
 
     const easeFlip = Ease[flipEaseFunction] || ((t) => t);
     const wrap = this._wrap;
-    const card = this._card;
-    const inset = this._inset;
+    const shadowWrap = this._shadowWrap;
+    const tileSprite = this._tileSprite;
     const icon = this._icon;
     const tileSize = this._tileSize;
-    const radius = this._tileRadius;
-    const pad = this._tilePad;
     const startScaleY = Math.max(1, wrap.scale.y);
+    const startShadowScaleY = shadowWrap?.scale
+      ? Math.max(1, shadowWrap.scale.y)
+      : null;
     const startSkew = this.getSkew();
     const startTilt = this._tiltDir >= 0 ? +1 : -1;
 
@@ -368,10 +517,10 @@ export class Card {
     const contentConfig = content ?? {};
     const contentKey =
       contentConfig.key ?? contentConfig.face ?? contentConfig.type ?? null;
-    const wantsIconAnimation =
-      Boolean(shouldPlayIconAnimation) && !this.disableAnimations;
-    const shouldDeferIconAnimation = wantsIconAnimation && Boolean(deferIconAnimation);
-    const shouldAnimateIconNow = wantsIconAnimation && !shouldDeferIconAnimation;
+    const shouldPlayIconAnimation = false;
+
+    this._iconContentConfig = contentConfig;
+    this._iconLastRevealContext = { revealedByPlayer };
 
     this.tween({
       duration: flipDuration,
@@ -380,10 +529,8 @@ export class Card {
         if (
           this.destroyed ||
           !wrap?.scale ||
-          !card ||
-          card.destroyed ||
-          !inset ||
-          inset.destroyed ||
+          !tileSprite ||
+          tileSprite.destroyed ||
           !icon ||
           icon.destroyed
         ) {
@@ -397,6 +544,11 @@ export class Card {
 
         wrap.scale.x = widthFactor * popS;
         wrap.scale.y = startScaleY * popS;
+        if (shadowWrap?.scale) {
+          const baseY = startShadowScaleY ?? startScaleY;
+          shadowWrap.scale.x = widthFactor * popS;
+          shadowWrap.scale.y = baseY * popS;
+        }
         this.setSkew(skewOut);
 
         if (!this._swapHandled && t >= 0.5) {
@@ -413,31 +565,31 @@ export class Card {
             iconSizePercentage ??
             contentConfig.iconSizePercentage ??
             this.iconOptions.sizePercentage;
-          const maxW = tileSize * baseSize * iconSizeFactor;
-          const maxH = tileSize * baseSize * iconSizeFactor;
-          icon.width = maxW;
-          icon.height = maxH;
+          const iconScaleMultiplier = this.iconOptions.scaleMultiplier ?? 1;
+          const maxDimension =
+            tileSize * baseSize * iconSizeFactor * iconScaleMultiplier;
 
           if (contentConfig.texture) {
-            if (Array.isArray(icon.textures)) {
-              icon.textures = [contentConfig.texture];
-            }
             icon.texture = contentConfig.texture;
           }
 
           const iconContext = {
             card: this,
             revealedByPlayer,
-            shouldPlayAnimation: shouldAnimateIconNow,
+            shouldPlayAnimation: shouldPlayIconAnimation,
+            startFromFirstFrame: true,
             animationHandled: false,
           };
 
           contentConfig.configureIcon?.(icon, iconContext);
 
+          const referenceTexture = contentConfig.texture ?? icon.texture ?? null;
+          this.#applyIconSizing(icon, maxDimension, referenceTexture);
+
           if (!iconContext.animationHandled && Array.isArray(icon.textures)) {
             icon.gotoAndStop?.(0);
             if (
-              shouldAnimateIconNow &&
+              shouldPlayIconAnimation &&
               icon.textures.length > 1 &&
               typeof icon.play === "function"
             ) {
@@ -445,18 +597,6 @@ export class Card {
             } else {
               icon.stop?.();
             }
-          }
-
-          if (shouldDeferIconAnimation) {
-            this._pendingIconAnimation = true;
-            this._deferredIconConfigurator =
-              typeof contentConfig.configureIcon === "function"
-                ? contentConfig.configureIcon
-                : null;
-            this._deferredIconRevealedByPlayer = revealedByPlayer;
-            this._deferredIconStartFromFirstFrame = true;
-            icon.stop?.();
-            icon.gotoAndStop?.(0);
           }
 
           const facePalette = this.#resolveRevealColor({
@@ -506,6 +646,7 @@ export class Card {
         }
         this._animating = false;
         this.revealed = true;
+        this.#updateTileTexture();
         this._swapHandled = false;
         const completionPayload = {
           content: contentConfig,
@@ -522,76 +663,27 @@ export class Card {
     return true;
   }
 
-  playDeferredIconAnimation() {
-    if (!this.revealed || !this._pendingIconAnimation) {
-      return;
-    }
-
-    if (this.disableAnimations) {
-      this._pendingIconAnimation = false;
-      this._deferredIconConfigurator = null;
-      this._deferredIconRevealedByPlayer = false;
-      this._deferredIconStartFromFirstFrame = false;
-      return;
-    }
-
-    const icon = this._icon;
-    if (!icon) {
-      this._pendingIconAnimation = false;
-      this._deferredIconConfigurator = null;
-      this._deferredIconStartFromFirstFrame = false;
-      return;
-    }
-
-    icon.gotoAndStop?.(0);
-
-    const context = {
-      card: this,
-      revealedByPlayer: this._deferredIconRevealedByPlayer,
-      shouldPlayAnimation: true,
-      animationHandled: false,
-      startFromFirstFrame: this._deferredIconStartFromFirstFrame,
-    };
-
-    if (typeof this._deferredIconConfigurator === "function") {
-      this._deferredIconConfigurator(icon, context);
-    }
-
-    if (!context.animationHandled && Array.isArray(icon.textures)) {
-      if (icon.textures.length > 1 && typeof icon.play === "function") {
-        icon.play();
-      } else {
-        icon.stop?.();
-      }
-    }
-
-    this._pendingIconAnimation = false;
-    this._deferredIconConfigurator = null;
-    this._deferredIconRevealedByPlayer = false;
-    this._deferredIconStartFromFirstFrame = false;
-  }
-
   flipFace(color) {
-    if (!this._card) return;
-    this._card
-      .clear()
-      .roundRect(0, 0, this._tileSize, this._tileSize, this._tileRadius)
-      .fill(color)
-      .stroke({
-        color: this.palette.tileStrokeFlipped ?? this.palette.tileStroke,
-        width: this.strokeWidth,
-        alpha: 0.9,
-      });
+    const sprite = this._tileSprite;
+    if (!sprite) return;
+    this._tileState = "flipped";
+    this._isHovering = false;
+    this.#updateTileTexture();
+    if (this.stateTextures?.flipped) {
+      sprite.tint = 0xffffff;
+      return;
+    }
+
+    if (color != null) {
+      sprite.tint = color;
+    } else {
+      const fallback = this.palette.defaultTint ?? 0xffffff;
+      sprite.tint = fallback;
+    }
   }
 
   flipInset(color) {
-    if (!this._inset) return;
-    const pad = this._tilePad;
-    const size = this._tileSize - pad * 2;
-    this._inset
-      .clear()
-      .roundRect(pad, pad, size, size, Math.max(0, this._tileRadius - pad))
-      .fill(color);
+    // No-op: inset visuals are now handled by tile sprites.
   }
 
   tween({ duration, ease = (t) => t, update, complete }) {
@@ -622,12 +714,17 @@ export class Card {
     this._baseX = x;
     this._baseY = y;
     this.container.position.set(x, y);
+    this._shadowContainer?.position.set(x, y);
     if (scale != null) {
       this.container.scale?.set?.(scale, scale);
+      this._shadowContainer?.scale?.set?.(scale, scale);
       this._layoutScale = scale;
     }
     if (!this._shakeActive) {
       this.container.rotation = 0;
+      if (this._shadowContainer) {
+        this._shadowContainer.rotation = 0;
+      }
     }
   }
 
@@ -635,8 +732,14 @@ export class Card {
     if (!this._wrap?.skew) return;
     if (this.animationOptions.hoverTiltAxis === "y") {
       this._wrap.skew.y = v;
+      if (this._shadowWrap?.skew) {
+        this._shadowWrap.skew.y = v;
+      }
     } else {
       this._wrap.skew.x = v;
+      if (this._shadowWrap?.skew) {
+        this._shadowWrap.skew.x = v;
+      }
     }
   }
 
@@ -657,13 +760,64 @@ export class Card {
     this._bumpToken = null;
     this.#cancelSpawnAnimation();
     this.#stopWinHighlightLoop();
-    this._icon?.stop?.();
+    if (this._frameTweenCancel) {
+      this._frameTweenCancel();
+      this._frameTweenCancel = null;
+    }
+    this._shadowContainer?.destroy?.({ children: true });
+    this._shadowContainer = null;
+    this._shadowWrap = null;
     this.container?.destroy?.({ children: true });
     this._wrap = null;
-    this._card = null;
-    this._inset = null;
+    this._tileSprite = null;
+    this.stopIconAnimation();
     this._icon = null;
+    this._frameSprite = null;
     this._matchEffectsLayer = null;
+    this._iconContentConfig = null;
+    this._iconLastRevealContext = null;
+  }
+
+  fadeInWinFrame({ duration = 1000 } = {}) {
+    const sprite = this._frameSprite;
+    if (!sprite) return;
+
+    const startAlpha = sprite.visible ? sprite.alpha ?? 0 : 0;
+    const clampedStart = Math.min(1, Math.max(0, startAlpha));
+    if (clampedStart >= 0.999) {
+      sprite.visible = true;
+      sprite.alpha = 1;
+      return;
+    }
+
+    this._frameTweenCancel?.();
+    this._frameTweenCancel = null;
+
+    sprite.visible = true;
+    sprite.alpha = clampedStart;
+
+    this._frameTweenCancel = this.tween({
+      duration,
+      ease: (t) => t,
+      update: (p) => {
+        const eased = Math.min(1, Math.max(0, p));
+        sprite.alpha = clampedStart + (1 - clampedStart) * eased;
+      },
+      complete: () => {
+        sprite.alpha = 1;
+        sprite.visible = true;
+        this._frameTweenCancel = null;
+      },
+    });
+  }
+
+  hideWinFrame() {
+    const sprite = this._frameSprite;
+    if (!sprite) return;
+    this._frameTweenCancel?.();
+    this._frameTweenCancel = null;
+    sprite.alpha = 0;
+    sprite.visible = false;
   }
 
   #stopWinHighlightLoop() {
@@ -679,6 +833,7 @@ export class Card {
     }
 
     const wrap = this._wrap;
+    const shadowWrap = this._shadowWrap;
     this._spawnTweenCancel();
     this._spawnTweenCancel = null;
 
@@ -688,6 +843,91 @@ export class Card {
       wrap.scale.x = 1;
       wrap.scale.y = 1;
     }
+    if (shadowWrap?.scale?.set) {
+      shadowWrap.scale.set(1, 1);
+    } else if (shadowWrap?.scale) {
+      shadowWrap.scale.x = 1;
+      shadowWrap.scale.y = 1;
+    }
+  }
+
+  #applyIconSizing(icon, maxDimension, textureOverride = null) {
+    if (!icon) {
+      return;
+    }
+
+    const targetSize = Math.max(0, maxDimension ?? 0);
+    const texture = textureOverride ?? icon.texture ?? null;
+
+    const applySquareSize = () => {
+      icon.width = targetSize;
+      icon.height = targetSize;
+    };
+
+    if (!texture) {
+      applySquareSize();
+      return;
+    }
+
+    const dimensions = this.#getTextureDimensions(texture);
+    if (!dimensions) {
+      applySquareSize();
+
+      if (texture?.valid === false && typeof texture.once === "function") {
+        texture.once("update", () => {
+          if (this.destroyed || icon.destroyed) {
+            return;
+          }
+          this.#applyIconSizing(icon, maxDimension, texture);
+        });
+      }
+
+      return;
+    }
+
+    const aspect = dimensions.width / dimensions.height;
+    if (!Number.isFinite(aspect) || aspect <= 0) {
+      applySquareSize();
+      return;
+    }
+
+    if (aspect >= 1) {
+      icon.width = targetSize;
+      icon.height = targetSize / aspect;
+    } else {
+      icon.height = targetSize;
+      icon.width = targetSize * aspect;
+    }
+  }
+
+  #getTextureDimensions(texture) {
+    if (!texture) {
+      return null;
+    }
+
+    const width =
+      texture?.orig?.width ??
+      texture?.frame?.width ??
+      texture?.trim?.width ??
+      texture?.baseTexture?.realWidth ??
+      texture?.baseTexture?.width ??
+      texture?.width ??
+      0;
+
+    const height =
+      texture?.orig?.height ??
+      texture?.frame?.height ??
+      texture?.trim?.height ??
+      texture?.baseTexture?.realHeight ??
+      texture?.baseTexture?.height ??
+      texture?.height ??
+      0;
+
+    if (width > 0 && height > 0) {
+      return { width, height };
+    }
+
+    return null;
   }
 
   startMatchShake({
@@ -767,6 +1007,11 @@ export class Card {
       this.container.y = this._baseY;
       this.container.rotation = 0;
     }
+    if (this._shadowContainer) {
+      this._shadowContainer.x = this._baseX;
+      this._shadowContainer.y = this._baseY;
+      this._shadowContainer.rotation = 0;
+    }
   }
 
   playMatchSpark() {
@@ -788,11 +1033,17 @@ export class Card {
     sprite.alpha = 0;
 
     const textureWidth =
-      texture?.width ?? texture?.orig?.width ?? texture?.baseTexture?.width ?? 1;
+      texture?.width ??
+      texture?.orig?.width ??
+      texture?.baseTexture?.width ??
+      1;
     const textureHeight =
-      texture?.height ?? texture?.orig?.height ?? texture?.baseTexture?.height ?? 1;
+      texture?.height ??
+      texture?.orig?.height ??
+      texture?.baseTexture?.height ??
+      1;
     const maxDimension = Math.max(1, textureWidth, textureHeight);
-    const baseScale = (this._tileSize * 1.5) / maxDimension;
+    const baseScale = (this._tileSize * 1.2) / maxDimension;
 
     const appearPortion = 0.25;
     const startScale = 0.45;
@@ -887,75 +1138,90 @@ export class Card {
     }
 
     if (revealedByPlayer) {
-      return paletteSet?.revealed ?? fallbackRevealed ?? this.palette.defaultTint;
+      return (
+        paletteSet?.revealed ?? fallbackRevealed ?? this.palette.defaultTint
+      );
     }
 
     return (
       paletteSet?.unrevealed ??
       fallbackUnrevealed ??
-      this.palette.defaultTint ?? 0xffffff
+      this.palette.defaultTint ??
+      0xffffff
     );
   }
 
+  #setHoverState(isHovering) {
+    const shouldHover = Boolean(isHovering && !this.revealed);
+    if (this._isHovering === shouldHover && this._tileState !== "flipped") {
+      return;
+    }
+    this._isHovering = shouldHover;
+    this.#updateTileTexture();
+  }
+
+  #updateTileTexture() {
+    const sprite = this._tileSprite;
+    if (!sprite) return;
+
+    let texture = this.stateTextures.default ?? Texture.WHITE;
+    if (this._tileState === "flipped" || this.revealed) {
+      texture = this.stateTextures.flipped ?? texture;
+    } else if (this._isHovering && this.stateTextures.hover) {
+      texture = this.stateTextures.hover;
+    }
+
+    if (texture && sprite.texture !== texture) {
+      sprite.texture = texture;
+    }
+
+    if (this._tileSize > 0) {
+      sprite.width = this._tileSize;
+      sprite.height = this._tileSize;
+    }
+  }
+
   #createCard(tileSize) {
-    const pad = Math.max(6, Math.floor(tileSize * 0.04));
-    const radius = Math.max(10, Math.floor(tileSize * 0.06));
-    const elevationOffset = Math.max(2, Math.floor(tileSize * 0.04));
-    const lipOffset = Math.max(4, Math.floor(tileSize * 0.01));
-    const shadowBlur = Math.max(10, Math.floor(tileSize * 0.22));
-
-    const elevationShadow = new Graphics()
-      .roundRect(0, 0, tileSize, tileSize, radius)
-      .fill(this.palette.tileElevationShadow);
-    elevationShadow.y = elevationOffset;
-    elevationShadow.alpha = 0.32;
-    const shadowFilter = new BlurFilter(shadowBlur);
-    shadowFilter.quality = 2;
-    elevationShadow.filters = [shadowFilter];
-
-    const elevationLip = new Graphics()
-      .roundRect(0, 0, tileSize, tileSize, radius)
-      .fill(this.palette.tileElevationBase);
-    elevationLip.y = lipOffset;
-    elevationLip.alpha = 0.85;
-
-    const card = new Graphics();
-    card
-      .roundRect(0, 0, tileSize, tileSize, radius)
-      .fill(this.palette.tileBase)
-      .stroke({
-        color: this.palette.tileStroke,
-        width: this.strokeWidth,
-        alpha: 0.9,
-      });
-
-    const inset = new Graphics();
-    inset
-      .roundRect(pad, pad, tileSize - pad * 2, tileSize - pad * 2, Math.max(0, radius - pad))
-      .fill(this.palette.tileInset);
+    const tileTexture = this.stateTextures.default ?? Texture.WHITE;
+    const tileSprite = new Sprite(tileTexture);
+    tileSprite.anchor.set(0.5);
+    tileSprite.position.set(tileSize / 2, tileSize / 2);
+    tileSprite.width = tileSize;
+    tileSprite.height = tileSize;
 
     const icon = new AnimatedSprite([Texture.EMPTY]);
     icon.anchor.set(0.5);
-    icon.x = tileSize / 2;
-    icon.y = tileSize / 2;
+    icon.x = tileSize / 2 + this.iconOptions.offsetX;
+    icon.y = tileSize / 2 + this.iconOptions.offsetY;
     icon.visible = false;
     icon.loop = true;
     icon.animationSpeed = 0.25;
     icon.stop();
     icon.gotoAndStop?.(0);
 
+    const frameSprite = this.frameTexture
+      ? new Sprite(this.frameTexture)
+      : null;
+    if (frameSprite) {
+      frameSprite.anchor.set(0.5);
+      frameSprite.position.set(tileSize / 2, (tileSize - 8) / 2);
+      frameSprite.width = tileSize;
+      frameSprite.height = tileSize - 4;
+      frameSprite.alpha = 0;
+      frameSprite.visible = false;
+    }
+
     const matchEffectsLayer = new Container();
     matchEffectsLayer.position.set(tileSize / 2, tileSize / 2);
 
     const flipWrap = new Container();
     flipWrap.addChild(
-      elevationShadow,
-      elevationLip,
-      card,
-      inset,
+      tileSprite,
+      ...(frameSprite ? [frameSprite] : []),
       matchEffectsLayer,
       icon
     );
+
     flipWrap.position.set(tileSize / 2, tileSize / 2);
     flipWrap.pivot.set(tileSize / 2, tileSize / 2);
 
@@ -968,13 +1234,18 @@ export class Card {
     tile.col = this.col;
 
     this._wrap = flipWrap;
-    this._card = card;
-    this._inset = inset;
+    this._shadowContainer = null;
+    this._shadowWrap = null;
+    this._tileSprite = tileSprite;
     this._icon = icon;
+    this._frameSprite = frameSprite;
     this._matchEffectsLayer = matchEffectsLayer;
     this._tileSize = tileSize;
-    this._tileRadius = radius;
-    this._tilePad = pad;
+    this._tileState = "default";
+    this._isHovering = false;
+
+    this.applyTint(this.palette.defaultTint);
+    this.#updateTileTexture();
 
     const s0 = 0.0001;
     flipWrap.scale?.set?.(s0);
@@ -996,9 +1267,13 @@ export class Card {
       });
     }
 
-    tile.on("pointerover", () => this.interactionCallbacks.onPointerOver?.(this));
+    tile.on("pointerover", () =>
+      this.interactionCallbacks.onPointerOver?.(this)
+    );
     tile.on("pointerout", () => this.interactionCallbacks.onPointerOut?.(this));
-    tile.on("pointerdown", () => this.interactionCallbacks.onPointerDown?.(this));
+    tile.on("pointerdown", () =>
+      this.interactionCallbacks.onPointerDown?.(this)
+    );
     tile.on("pointerup", () => this.interactionCallbacks.onPointerUp?.(this));
     tile.on("pointerupoutside", () =>
       this.interactionCallbacks.onPointerUpOutside?.(this)
@@ -1008,4 +1283,3 @@ export class Card {
     return tile;
   }
 }
-
